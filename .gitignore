@@ -151,6 +151,10 @@ activemq-data/
 
 # Environments
 .env
+
+# Local AsOf databases
+data/*.sqlite3*
+!data/.gitkeep
 .envrc
 .venv
 env/

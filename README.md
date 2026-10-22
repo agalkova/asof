@@ -34,6 +34,20 @@ These values remain in each series' native units. The magnitudes are not directl
 
 The executed table and PAYEMS revision chart are in `notebooks/revision_history.ipynb`.
 
+## v0.3
+
+Revision histories can now be stored in SQLite and loaded without calling FRED again. The database uses three tables:
+
+```text
+series
+└── observations
+    └── vintages
+```
+
+Each vintage is keyed by its series, observation date, and publication date. Saving a refreshed history replaces the stored snapshot for that observation in one transaction.
+
+`notebooks/local_persistence.ipynb` fetches the PAYEMS example, writes all 16 vintages to `data/asof.sqlite3`, closes the connection, and verifies that the same history can be loaded after reopening the database. Local SQLite files under `data/` are ignored by Git.
+
 ## Setup
 
 Python 3.11 or newer is required.
@@ -85,6 +99,19 @@ for revision in history.revisions:
     print(revision.vintage_date, revision.value)
 ```
 
+To keep the result locally:
+
+```python
+from asof import SQLiteRevisionStore
+
+with SQLiteRevisionStore("data/asof.sqlite3") as store:
+    store.save_history(history)
+    restored = store.load_history(
+        series_id="PAYEMS",
+        observation_date="2008-08-01",
+    )
+```
+
 ## Tests
 
 ```bash
@@ -95,4 +122,4 @@ The tests use mocked responses and do not require an API key or network access.
 
 ## Next
 
-v0.3 will turn the observation and vintage objects into a formal local data model before introducing PostgreSQL or a web API.
+v0.4 will add bulk synchronization and a PostgreSQL implementation of the same schema. The web API comes after that.

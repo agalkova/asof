@@ -2,71 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import requests
+
+from .models import FredObservation, RevisionComparison, RevisionHistory, VintageValue
 
 BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
 
 class FredApiError(RuntimeError):
     """A sanitized FRED error that never includes the API-key-bearing URL."""
-
-
-@dataclass(frozen=True)
-class FredObservation:
-    """One FRED observation, measured in the series' native units."""
-
-    series_id: str
-    observation_date: str
-    value: float
-    realtime_start: str
-    realtime_end: str
-
-
-@dataclass(frozen=True)
-class VintageValue:
-    """The value published for an observation on one vintage date."""
-
-    vintage_date: str
-    value: float
-
-
-@dataclass(frozen=True)
-class RevisionHistory:
-    """Every published value change for one observation."""
-
-    series_id: str
-    observation_date: str
-    revisions: tuple[VintageValue, ...]
-
-    @property
-    def initial(self) -> VintageValue:
-        return self.revisions[0]
-
-    @property
-    def current(self) -> VintageValue:
-        return self.revisions[-1]
-
-    @property
-    def total_revision(self) -> float:
-        """Latest published value minus the initial release value."""
-
-        return self.current.value - self.initial.value
-
-
-@dataclass(frozen=True)
-class RevisionComparison:
-    """Historical and current values for the same observation."""
-
-    historical: FredObservation
-    current: FredObservation
-
-    @property
-    def revision(self) -> float:
-        """Current value minus the historical value."""
-
-        return self.current.value - self.historical.value
 
 
 def _request_json(*, params: dict[str, object], timeout: float) -> dict:
