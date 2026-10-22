@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from asof.fred import FredApiError, compare_vintages, get_observation
+from asof.fred import FredApiError, compare_vintages, get_observation, get_revision_history
 
 
 def response_with(value, *, realtime_start="2008-09-12", realtime_end="2008-09-12"):
@@ -62,6 +62,51 @@ class FredTests(unittest.TestCase):
         current_params = mock_get.call_args_list[1].kwargs["params"]
         self.assertNotIn("realtime_start", current_params)
         self.assertNotIn("realtime_end", current_params)
+
+    @patch("asof.fred.requests.get")
+    def test_get_revision_history_parses_and_sorts_changed_values(self, mock_get):
+        response = Mock()
+        response.json.return_value = {
+            "observations": [
+                {
+                    "date": "2008-08-01",
+                    "PAYEMS_20081107": "137423",
+                    "PAYEMS_20080905": "137473",
+                    "PAYEMS_20081003": "137477",
+                }
+            ]
+        }
+        mock_get.return_value = response
+
+        history = get_revision_history(
+            series_id="PAYEMS",
+            observation_date="2008-08-01",
+            api_key="test-key",
+        )
+
+        self.assertEqual(
+            [revision.vintage_date for revision in history.revisions],
+            ["2008-09-05", "2008-10-03", "2008-11-07"],
+        )
+        self.assertEqual(history.initial.value, 137473.0)
+        self.assertEqual(history.current.value, 137423.0)
+        self.assertEqual(history.total_revision, -50.0)
+        params = mock_get.call_args.kwargs["params"]
+        self.assertEqual(params["output_type"], 3)
+        self.assertEqual(params["realtime_end"], "9999-12-31")
+
+    @patch("asof.fred.requests.get")
+    def test_get_revision_history_rejects_an_empty_history(self, mock_get):
+        response = Mock()
+        response.json.return_value = {"observations": [{"date": "1900-01-01"}]}
+        mock_get.return_value = response
+
+        with self.assertRaisesRegex(ValueError, "has no revision history"):
+            get_revision_history(
+                series_id="PAYEMS",
+                observation_date="1900-01-01",
+                api_key="test-key",
+            )
 
     @patch("asof.fred.requests.get")
     def test_missing_observation_has_a_clear_error(self, mock_get):
