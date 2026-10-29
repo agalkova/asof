@@ -88,6 +88,23 @@ class SQLiteRevisionStoreTests(unittest.TestCase):
 
         self.assertEqual(actual, expected)
 
+    def test_file_database_can_be_reopened_read_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "asof.sqlite3"
+            expected = history()
+            with SQLiteRevisionStore(database) as store:
+                store.save_history(expected)
+
+            with SQLiteRevisionStore(database, read_only=True) as store:
+                actual = store.load_history(
+                    series_id="PAYEMS",
+                    observation_date="2008-08-01",
+                )
+                ready = store.is_ready()
+
+        self.assertEqual(actual, expected)
+        self.assertTrue(ready)
+
 
 if __name__ == "__main__":
     unittest.main()

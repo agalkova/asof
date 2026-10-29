@@ -24,6 +24,9 @@ class FakeCursor:
     def fetchall(self):
         return self.connection.results.pop(0)
 
+    def fetchone(self):
+        return (1,)
+
 
 class FakeConnection:
     def __init__(self):
@@ -69,6 +72,25 @@ class PostgresRevisionStoreTests(unittest.TestCase):
     def test_schema_is_created_on_startup(self):
         self.assertEqual(self.connection.transactions, 1)
         self.assertEqual(len(self.connection.executed), 3)
+
+    def test_read_only_startup_does_not_create_schema(self):
+        connection = FakeConnection()
+
+        store = PostgresRevisionStore(
+            "postgresql://example",
+            connection_factory=lambda dsn: connection,
+            read_only=True,
+        )
+
+        self.assertEqual(connection.transactions, 0)
+        self.assertEqual(connection.executed, [])
+        store.close()
+
+    def test_readiness_checks_the_series_table(self):
+        ready = self.store.is_ready()
+
+        self.assertTrue(ready)
+        self.assertIn("SELECT 1 FROM series", self.connection.executed[-1][0])
 
     def test_history_is_replaced_in_one_transaction(self):
         saved = self.store.save_history(history())

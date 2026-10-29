@@ -23,6 +23,24 @@ class ModelTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "finite"):
             VintageValue("2008-09-05", float("nan"))
 
+    def test_revision_history_returns_the_value_known_as_of_a_date(self):
+        history = RevisionHistory(
+            series_id="PAYEMS",
+            observation_date="2008-08-01",
+            revisions=(
+                VintageValue("2008-09-05", 137473.0),
+                VintageValue("2008-10-03", 137477.0),
+            ),
+        )
+
+        before_release = history.value_as_of("2008-09-04")
+        first_release = history.value_as_of("2008-09-12")
+        revised = history.value_as_of("2008-10-03")
+
+        self.assertIsNone(before_release)
+        self.assertEqual(first_release, VintageValue("2008-09-05", 137473.0))
+        self.assertEqual(revised, VintageValue("2008-10-03", 137477.0))
+
 
 if __name__ == "__main__":
     unittest.main()

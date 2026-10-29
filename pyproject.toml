@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asof-economic-data"
-version = "0.5.0"
+version = "0.6.0"
 description = "Point-in-time queries for revised economic data"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,6 +23,12 @@ notebook = [
 ]
 postgres = [
   "psycopg[binary]>=3.2,<4",
+]
+api = [
+  "fastapi>=0.162,<1",
+  "httpx2>=2.16,<3",
+  "python-dotenv>=1,<2",
+  "uvicorn>=0.34,<1",
 ]
 
 [tool.setuptools.packages.find]

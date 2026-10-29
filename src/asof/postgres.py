@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from datetime import date
+from threading import RLock
 from types import TracebackType
 from typing import Any
 
@@ -59,13 +60,16 @@ class PostgresRevisionStore:
         dsn: str,
         *,
         connection_factory: Callable[[str], Any] | None = None,
+        read_only: bool = False,
     ) -> None:
         connect = connection_factory or _connect
+        self._lock = RLock()
         self._connection = connect(dsn)
-        with self._connection.transaction():
-            with self._connection.cursor() as cursor:
-                for statement in SCHEMA:
-                    cursor.execute(statement)
+        if not read_only:
+            with self._connection.transaction():
+                with self._connection.cursor() as cursor:
+                    for statement in SCHEMA:
+                        cursor.execute(statement)
 
     def save_history(self, history: RevisionHistory) -> int:
         """Replace the stored history for one observation and return its row count."""
@@ -76,10 +80,11 @@ class PostgresRevisionStore:
         """Replace several histories in one transaction and return the vintage count."""
 
         histories = tuple(histories)
-        with self._connection.transaction():
-            with self._connection.cursor() as cursor:
-                for history in histories:
-                    self._replace_history(cursor, history)
+        with self._lock:
+            with self._connection.transaction():
+                with self._connection.cursor() as cursor:
+                    for history in histories:
+                        self._replace_history(cursor, history)
         return sum(len(history.revisions) for history in histories)
 
     @staticmethod
@@ -122,18 +127,19 @@ class PostgresRevisionStore:
     def load_history(self, *, series_id: str, observation_date: str) -> RevisionHistory | None:
         """Load one history, or return ``None`` when it is not stored."""
 
-        with self._connection.transaction():
-            with self._connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT vintage_date, value
-                    FROM vintages
-                    WHERE series_id = %s AND observation_date = %s
-                    ORDER BY vintage_date
-                    """,
-                    (series_id, observation_date),
-                )
-                rows = cursor.fetchall()
+        with self._lock:
+            with self._connection.transaction():
+                with self._connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT vintage_date, value
+                        FROM vintages
+                        WHERE series_id = %s AND observation_date = %s
+                        ORDER BY vintage_date
+                        """,
+                        (series_id, observation_date),
+                    )
+                    rows = cursor.fetchall()
         if not rows:
             return None
         return RevisionHistory(
@@ -148,22 +154,35 @@ class PostgresRevisionStore:
     def list_observations(self, *, series_id: str) -> tuple[str, ...]:
         """Return stored observation dates for a series in ascending order."""
 
-        with self._connection.transaction():
-            with self._connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT observation_date
-                    FROM observations
-                    WHERE series_id = %s
-                    ORDER BY observation_date
-                    """,
-                    (series_id,),
-                )
-                rows = cursor.fetchall()
+        with self._lock:
+            with self._connection.transaction():
+                with self._connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT observation_date
+                        FROM observations
+                        WHERE series_id = %s
+                        ORDER BY observation_date
+                        """,
+                        (series_id,),
+                    )
+                    rows = cursor.fetchall()
         return tuple(_iso_date(row[0]) for row in rows)
 
     def close(self) -> None:
-        self._connection.close()
+        with self._lock:
+            self._connection.close()
+
+    def is_ready(self) -> bool:
+        with self._lock:
+            try:
+                with self._connection.transaction():
+                    with self._connection.cursor() as cursor:
+                        cursor.execute("SELECT 1 FROM series LIMIT 1")
+                        cursor.fetchone()
+            except Exception:
+                return False
+        return True
 
     def __enter__(self) -> PostgresRevisionStore:
         return self

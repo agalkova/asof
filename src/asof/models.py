@@ -81,6 +81,17 @@ class RevisionHistory:
 
         return self.current.value - self.initial.value
 
+    def value_as_of(self, as_of_date: str) -> VintageValue | None:
+        """Return the latest value published on or before a date."""
+
+        _validate_iso_date(as_of_date, "as_of_date")
+        available = [
+            revision
+            for revision in self.revisions
+            if revision.vintage_date <= as_of_date
+        ]
+        return available[-1] if available else None
+
 
 @dataclass(frozen=True)
 class RevisionComparison:

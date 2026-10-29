@@ -56,6 +56,10 @@ A compact date range can now be fetched in one ALFRED request and saved to SQLit
 
 Revision histories can also be stored in PostgreSQL. The PostgreSQL store follows the same interface as the local SQLite store, including batch transactions and replacement of refreshed histories. PostgreSQL support is optional, so the base package remains lightweight.
 
+## v0.6
+
+Stored histories are available through a small read-only API. It can list observation dates, return a full revision history, or answer the core point-in-time question for a requested `as_of` date. Both SQLite and PostgreSQL use the same endpoints.
+
 ## Setup
 
 Python 3.11 or newer is required.
@@ -82,6 +86,15 @@ pip install -e ".[postgres]"
 ```
 
 Set `DATABASE_URL` in `.env` to your PostgreSQL connection string.
+
+For the API:
+
+```bash
+pip install -e ".[api]"
+uvicorn asof.server:app --reload
+```
+
+The server opens `ASOF_DATABASE_PATH` in read-only mode for SQLite. If `DATABASE_URL` is set, it uses PostgreSQL without running schema setup, so a read-only database role can be used. Load data before starting the server. Interactive API documentation is available at `http://127.0.0.1:8000/docs` while the server is running.
 
 ## Python usage
 
@@ -164,6 +177,20 @@ with PostgresRevisionStore(os.environ["DATABASE_URL"]) as store:
     )
 ```
 
+To query the value known on September 12, 2008:
+
+```bash
+curl "http://127.0.0.1:8000/series/PAYEMS/observations/2008-08-01/value?as_of=2008-09-12"
+```
+
+The other read endpoints are:
+
+```text
+GET /health
+GET /series/{series_id}/observations
+GET /series/{series_id}/observations/{observation_date}
+```
+
 ## Tests
 
 ```bash
@@ -176,4 +203,4 @@ The PostgreSQL integration test is skipped unless `ASOF_TEST_DATABASE_URL` point
 
 ## Next
 
-v0.6 will add the first read-only web API around the stored data.
+v0.7 will add a command-line sync so new series and date ranges can be loaded without editing a notebook.
