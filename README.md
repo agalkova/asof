@@ -52,6 +52,10 @@ Each vintage is keyed by its series, observation date, and publication date. Sav
 
 A compact date range can now be fetched in one ALFRED request and saved to SQLite in one transaction. `notebooks/bulk_sync.ipynb` syncs July through September 2008 PAYEMS data: three observations and 51 vintages. ALFRED caps this response format at 2,000 vintage dates, so the client rejects a response at that limit instead of quietly storing an incomplete history.
 
+## v0.5
+
+Revision histories can also be stored in PostgreSQL. The PostgreSQL store follows the same interface as the local SQLite store, including batch transactions and replacement of refreshed histories. PostgreSQL support is optional, so the base package remains lightweight.
+
 ## Setup
 
 Python 3.11 or newer is required.
@@ -70,6 +74,14 @@ jupyter lab
 ```
 
 The local `.env` file is ignored by Git. Do not put an API key directly in code or notebook output.
+
+For PostgreSQL support:
+
+```bash
+pip install -e ".[postgres]"
+```
+
+Set `DATABASE_URL` in `.env` to your PostgreSQL connection string.
 
 ## Python usage
 
@@ -131,6 +143,27 @@ with SQLiteRevisionStore("data/asof.sqlite3") as store:
     )
 ```
 
+The same sync works with PostgreSQL:
+
+```python
+import os
+
+from dotenv import load_dotenv
+
+from asof import PostgresRevisionStore, sync_revision_histories
+
+load_dotenv()
+
+with PostgresRevisionStore(os.environ["DATABASE_URL"]) as store:
+    result = sync_revision_histories(
+        store=store,
+        series_id="PAYEMS",
+        observation_start="2008-07-01",
+        observation_end="2008-09-01",
+        api_key=os.environ["FRED_API_KEY"],
+    )
+```
+
 ## Tests
 
 ```bash
@@ -139,6 +172,8 @@ python -m unittest discover -s tests -v
 
 The tests use mocked responses and do not require an API key or network access.
 
+The PostgreSQL integration test is skipped unless `ASOF_TEST_DATABASE_URL` points to a test database. It creates uniquely named records but should never be run against production.
+
 ## Next
 
-v0.5 will add a PostgreSQL implementation of the same schema. The web API comes after that.
+v0.6 will add the first read-only web API around the stored data.

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .fred import get_revision_histories
-from .storage import SQLiteRevisionStore
+from .storage import RevisionStore
 
 
 @dataclass(frozen=True)
@@ -19,7 +19,7 @@ class SyncResult:
 
 def sync_revision_histories(
     *,
-    store: SQLiteRevisionStore,
+    store: RevisionStore,
     series_id: str,
     observation_start: str,
     observation_end: str,

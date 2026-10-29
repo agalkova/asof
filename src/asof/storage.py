@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Iterable
 from pathlib import Path
 from types import TracebackType
+from typing import Protocol
 
 from .models import RevisionHistory, VintageValue
 
@@ -31,6 +32,14 @@ CREATE TABLE IF NOT EXISTS vintages (
         REFERENCES observations (series_id, observation_date) ON DELETE CASCADE
 );
 """
+
+
+class RevisionStore(Protocol):
+    """Storage behavior used by the synchronization service."""
+
+    def save_histories(self, histories: Iterable[RevisionHistory]) -> int:
+        """Store several histories and return the number of vintages written."""
+        ...
 
 
 class SQLiteRevisionStore:

@@ -13,7 +13,8 @@ from .models import (
     RevisionHistory,
     VintageValue,
 )
-from .storage import SQLiteRevisionStore
+from .postgres import PostgresRevisionStore
+from .storage import RevisionStore, SQLiteRevisionStore
 from .sync import SyncResult, sync_revision_histories
 
 __all__ = [
@@ -21,6 +22,8 @@ __all__ = [
     "FredObservation",
     "RevisionComparison",
     "RevisionHistory",
+    "RevisionStore",
+    "PostgresRevisionStore",
     "SQLiteRevisionStore",
     "SyncResult",
     "VintageValue",
