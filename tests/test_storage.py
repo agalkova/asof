@@ -57,6 +57,22 @@ class SQLiteRevisionStoreTests(unittest.TestCase):
 
         self.assertEqual(dates, ("2008-08-01", "2008-09-01"))
 
+    def test_multiple_histories_are_saved_together(self):
+        histories = (
+            history(observation_date="2008-08-01"),
+            history(
+                observation_date="2008-09-01",
+                revisions=(VintageValue("2008-10-03", 136978.0),),
+            ),
+        )
+
+        with SQLiteRevisionStore(":memory:") as store:
+            saved = store.save_histories(histories)
+            dates = store.list_observations(series_id="PAYEMS")
+
+        self.assertEqual(saved, 3)
+        self.assertEqual(dates, ("2008-08-01", "2008-09-01"))
+
     def test_file_database_survives_reopening(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "nested" / "asof.sqlite3"

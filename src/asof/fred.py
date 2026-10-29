@@ -7,6 +7,7 @@ import requests
 from .models import FredObservation, RevisionComparison, RevisionHistory, VintageValue
 
 BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
+MAX_VINTAGE_DATES_PER_RESPONSE = 2_000
 
 
 class FredApiError(RuntimeError):
@@ -85,27 +86,72 @@ def get_revision_history(
 ) -> RevisionHistory:
     """Fetch each date when one observation's published value changed."""
 
+    histories = get_revision_histories(
+        series_id=series_id,
+        observation_start=observation_date,
+        observation_end=observation_date,
+        api_key=api_key,
+        timeout=timeout,
+    )
+    if len(histories) != 1:
+        raise ValueError(
+            f"Expected one {series_id} revision row for {observation_date}; "
+            f"received {len(histories)}"
+        )
+    return histories[0]
+
+
+def get_revision_histories(
+    *,
+    series_id: str,
+    observation_start: str,
+    observation_end: str,
+    api_key: str,
+    timeout: float = 30,
+) -> tuple[RevisionHistory, ...]:
+    """Fetch revision histories for a compact, inclusive observation range.
+
+    ALFRED limits this response format to 2,000 vintage dates. Potentially
+    truncated responses are rejected instead of being stored as complete data.
+    """
+
     params = {
         "series_id": series_id,
         "api_key": api_key,
         "file_type": "json",
-        "observation_start": observation_date,
-        "observation_end": observation_date,
-        "realtime_start": observation_date,
+        "observation_start": observation_start,
+        "observation_end": observation_end,
+        "realtime_start": observation_start,
         "realtime_end": "9999-12-31",
         "output_type": 3,
     }
     payload = _request_json(params=params, timeout=timeout)
     observations = payload.get("observations", [])
-    if len(observations) != 1:
+
+    vintage_dates = {
+        key.removeprefix(f"{series_id}_")
+        for row in observations
+        for key in row
+        if key.startswith(f"{series_id}_")
+    }
+    if len(vintage_dates) >= MAX_VINTAGE_DATES_PER_RESPONSE:
         raise ValueError(
-            f"Expected one {series_id} revision row for {observation_date}; "
-            f"received {len(observations)}"
+            "ALFRED returned its 2,000-vintage limit; request a smaller range "
+            "to avoid storing an incomplete history"
         )
+
+    histories = tuple(_parse_revision_row(series_id=series_id, row=row) for row in observations)
+    return tuple(sorted(histories, key=lambda history: history.observation_date))
+
+
+def _parse_revision_row(*, series_id: str, row: dict) -> RevisionHistory:
+    observation_date = row.get("date")
+    if not isinstance(observation_date, str):
+        raise ValueError(f"{series_id} revision row is missing its observation date")
 
     prefix = f"{series_id}_"
     revisions = []
-    for key, value in observations[0].items():
+    for key, value in row.items():
         vintage = key.removeprefix(prefix)
         if not key.startswith(prefix) or len(vintage) != 8 or not vintage.isdigit():
             continue

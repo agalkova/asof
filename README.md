@@ -48,6 +48,10 @@ Each vintage is keyed by its series, observation date, and publication date. Sav
 
 `notebooks/local_persistence.ipynb` fetches the PAYEMS example, writes all 16 vintages to `data/asof.sqlite3`, closes the connection, and verifies that the same history can be loaded after reopening the database. Local SQLite files under `data/` are ignored by Git.
 
+## v0.4
+
+A compact date range can now be fetched in one ALFRED request and saved to SQLite in one transaction. `notebooks/bulk_sync.ipynb` syncs July through September 2008 PAYEMS data: three observations and 51 vintages. ALFRED caps this response format at 2,000 vintage dates, so the client rejects a response at that limit instead of quietly storing an incomplete history.
+
 ## Setup
 
 Python 3.11 or newer is required.
@@ -112,6 +116,21 @@ with SQLiteRevisionStore("data/asof.sqlite3") as store:
     )
 ```
 
+To fetch and store a range:
+
+```python
+from asof import sync_revision_histories
+
+with SQLiteRevisionStore("data/asof.sqlite3") as store:
+    result = sync_revision_histories(
+        store=store,
+        series_id="PAYEMS",
+        observation_start="2008-07-01",
+        observation_end="2008-09-01",
+        api_key="...",
+    )
+```
+
 ## Tests
 
 ```bash
@@ -122,4 +141,4 @@ The tests use mocked responses and do not require an API key or network access.
 
 ## Next
 
-v0.4 will add bulk synchronization and a PostgreSQL implementation of the same schema. The web API comes after that.
+v0.5 will add a PostgreSQL implementation of the same schema. The web API comes after that.

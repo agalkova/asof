@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
 from types import TracebackType
 
@@ -46,41 +47,51 @@ class SQLiteRevisionStore:
     def save_history(self, history: RevisionHistory) -> int:
         """Replace the stored history for one observation and return its row count."""
 
+        return self.save_histories((history,))
+
+    def save_histories(self, histories: Iterable[RevisionHistory]) -> int:
+        """Replace several histories in one transaction and return the vintage count."""
+
+        histories = tuple(histories)
         with self._connection:
-            self._connection.execute(
-                "INSERT OR IGNORE INTO series (series_id) VALUES (?)",
-                (history.series_id,),
-            )
-            self._connection.execute(
-                """
-                INSERT OR IGNORE INTO observations (series_id, observation_date)
-                VALUES (?, ?)
-                """,
-                (history.series_id, history.observation_date),
-            )
-            self._connection.execute(
-                """
-                DELETE FROM vintages
-                WHERE series_id = ? AND observation_date = ?
-                """,
-                (history.series_id, history.observation_date),
-            )
-            self._connection.executemany(
-                """
-                INSERT INTO vintages (series_id, observation_date, vintage_date, value)
-                VALUES (?, ?, ?, ?)
-                """,
-                [
-                    (
-                        history.series_id,
-                        history.observation_date,
-                        revision.vintage_date,
-                        revision.value,
-                    )
-                    for revision in history.revisions
-                ],
-            )
-        return len(history.revisions)
+            for history in histories:
+                self._replace_history(history)
+        return sum(len(history.revisions) for history in histories)
+
+    def _replace_history(self, history: RevisionHistory) -> None:
+        self._connection.execute(
+            "INSERT OR IGNORE INTO series (series_id) VALUES (?)",
+            (history.series_id,),
+        )
+        self._connection.execute(
+            """
+            INSERT OR IGNORE INTO observations (series_id, observation_date)
+            VALUES (?, ?)
+            """,
+            (history.series_id, history.observation_date),
+        )
+        self._connection.execute(
+            """
+            DELETE FROM vintages
+            WHERE series_id = ? AND observation_date = ?
+            """,
+            (history.series_id, history.observation_date),
+        )
+        self._connection.executemany(
+            """
+            INSERT INTO vintages (series_id, observation_date, vintage_date, value)
+            VALUES (?, ?, ?, ?)
+            """,
+            [
+                (
+                    history.series_id,
+                    history.observation_date,
+                    revision.vintage_date,
+                    revision.value,
+                )
+                for revision in history.revisions
+            ],
+        )
 
     def load_history(self, *, series_id: str, observation_date: str) -> RevisionHistory | None:
         """Load one history, or return ``None`` when it is not stored."""

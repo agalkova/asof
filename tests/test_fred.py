@@ -3,7 +3,14 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from asof.fred import FredApiError, compare_vintages, get_observation, get_revision_history
+from asof.fred import (
+    FredApiError,
+    MAX_VINTAGE_DATES_PER_RESPONSE,
+    compare_vintages,
+    get_observation,
+    get_revision_histories,
+    get_revision_history,
+)
 
 
 def response_with(value, *, realtime_start="2008-09-12", realtime_end="2008-09-12"):
@@ -105,6 +112,64 @@ class FredTests(unittest.TestCase):
             get_revision_history(
                 series_id="PAYEMS",
                 observation_date="1900-01-01",
+                api_key="test-key",
+            )
+
+    @patch("asof.fred.requests.get")
+    def test_get_revision_histories_parses_multiple_observations(self, mock_get):
+        response = Mock()
+        response.json.return_value = {
+            "observations": [
+                {
+                    "date": "2008-09-01",
+                    "PAYEMS_20081003": "136978",
+                    "PAYEMS_20081107": "136882",
+                },
+                {
+                    "date": "2008-08-01",
+                    "PAYEMS_20080905": "137473",
+                },
+            ]
+        }
+        mock_get.return_value = response
+
+        histories = get_revision_histories(
+            series_id="PAYEMS",
+            observation_start="2008-08-01",
+            observation_end="2008-09-01",
+            api_key="test-key",
+        )
+
+        self.assertEqual(
+            [history.observation_date for history in histories],
+            ["2008-08-01", "2008-09-01"],
+        )
+        self.assertEqual([len(history.revisions) for history in histories], [1, 2])
+        params = mock_get.call_args.kwargs["params"]
+        self.assertEqual(params["observation_start"], "2008-08-01")
+        self.assertEqual(params["observation_end"], "2008-09-01")
+
+    @patch("asof.fred.requests.get")
+    def test_get_revision_histories_rejects_a_capped_response(self, mock_get):
+        response = Mock()
+        response.json.return_value = {
+            "observations": [
+                {
+                    "date": "2008-08-01",
+                    **{
+                        f"PAYEMS_{vintage:08d}": "137473"
+                        for vintage in range(MAX_VINTAGE_DATES_PER_RESPONSE)
+                    },
+                }
+            ]
+        }
+        mock_get.return_value = response
+
+        with self.assertRaisesRegex(ValueError, "2,000-vintage limit"):
+            get_revision_histories(
+                series_id="PAYEMS",
+                observation_start="2008-08-01",
+                observation_end="2008-09-01",
                 api_key="test-key",
             )
 
