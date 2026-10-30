@@ -14,7 +14,7 @@ load_dotenv()
 
 
 def build_store():
-    database_url = os.getenv("DATABASE_URL")
+    database_url = os.getenv("ASOF_DATABASE_URL")
     if database_url:
         return PostgresRevisionStore(database_url, read_only=True)
     return SQLiteRevisionStore(

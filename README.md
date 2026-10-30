@@ -60,6 +60,10 @@ Revision histories can also be stored in PostgreSQL. The PostgreSQL store follow
 
 Stored histories are available through a small read-only API. It can list observation dates, return a full revision history, or answer the core point-in-time question for a requested `as_of` date. Both SQLite and PostgreSQL use the same endpoints.
 
+## v0.7
+
+New data can be loaded from the command line. The sync command reads the FRED key from `.env`, validates the date range, and writes to SQLite by default or PostgreSQL when `ASOF_DATABASE_URL` is set.
+
 ## Setup
 
 Python 3.11 or newer is required.
@@ -85,7 +89,7 @@ For PostgreSQL support:
 pip install -e ".[postgres]"
 ```
 
-Set `DATABASE_URL` in `.env` to your PostgreSQL connection string.
+Set `ASOF_DATABASE_URL` in `.env` to your PostgreSQL connection string.
 
 For the API:
 
@@ -94,7 +98,7 @@ pip install -e ".[api]"
 uvicorn asof.server:app --reload
 ```
 
-The server opens `ASOF_DATABASE_PATH` in read-only mode for SQLite. If `DATABASE_URL` is set, it uses PostgreSQL without running schema setup, so a read-only database role can be used. Load data before starting the server. Interactive API documentation is available at `http://127.0.0.1:8000/docs` while the server is running.
+The server opens `ASOF_DATABASE_PATH` in read-only mode for SQLite. If `ASOF_DATABASE_URL` is set, it uses PostgreSQL without running schema setup, so a read-only database role can be used. Load data before starting the server. Interactive API documentation is available at `http://127.0.0.1:8000/docs` while the server is running.
 
 ## Python usage
 
@@ -167,7 +171,7 @@ from asof import PostgresRevisionStore, sync_revision_histories
 
 load_dotenv()
 
-with PostgresRevisionStore(os.environ["DATABASE_URL"]) as store:
+with PostgresRevisionStore(os.environ["ASOF_DATABASE_URL"]) as store:
     result = sync_revision_histories(
         store=store,
         series_id="PAYEMS",
@@ -191,6 +195,19 @@ GET /series/{series_id}/observations
 GET /series/{series_id}/observations/{observation_date}
 ```
 
+## Command-line sync
+
+To load a compact observation range into the configured database:
+
+```bash
+asof sync \
+  --series PAYEMS \
+  --start 2008-07-01 \
+  --end 2008-09-01
+```
+
+Use `--sqlite path/to/asof.sqlite3` to override `ASOF_DATABASE_URL` and `ASOF_DATABASE_PATH` for one run. The sync command deliberately ignores the generic `DATABASE_URL` variable so it cannot write to an unrelated application database. The FRED key is only read from `FRED_API_KEY`; it is not accepted as a command argument.
+
 ## Tests
 
 ```bash
@@ -203,4 +220,4 @@ The PostgreSQL integration test is skipped unless `ASOF_TEST_DATABASE_URL` point
 
 ## Next
 
-v0.7 will add a command-line sync so new series and date ranges can be loaded without editing a notebook.
+v0.8 will split large ALFRED requests into safe chunks so longer ranges can sync without hitting the vintage limit.

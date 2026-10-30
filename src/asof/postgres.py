@@ -38,6 +38,10 @@ SCHEMA = (
 )
 
 
+class PostgresConnectionError(RuntimeError):
+    """Raised when PostgreSQL cannot be reached without exposing its DSN."""
+
+
 def _connect(dsn: str) -> Any:
     try:
         import psycopg
@@ -45,7 +49,10 @@ def _connect(dsn: str) -> Any:
         raise RuntimeError(
             'PostgreSQL support is optional. Install it with pip install -e ".[postgres]".'
         ) from error
-    return psycopg.connect(dsn)
+    try:
+        return psycopg.connect(dsn)
+    except psycopg.Error:
+        raise PostgresConnectionError("Could not connect to PostgreSQL") from None
 
 
 def _iso_date(value: str | date) -> str:
