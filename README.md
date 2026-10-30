@@ -68,6 +68,10 @@ New data can be loaded from the command line. The sync command reads the FRED ke
 
 Longer syncs now split themselves when an ALFRED response reaches the 2,000-vintage limit. Each half is retried recursively, then the complete result is stored in one database transaction. A single observation that exceeds the limit still stops with a clear error instead of saving incomplete data.
 
+## v0.9
+
+The project is ready for a first cloud preview. It includes a production container, a Render Blueprint, a database setup command, and a rolling refresh command for scheduled updates. The Blueprint describes an API service, PostgreSQL database, and daily PAYEMS refresh, but does not create or deploy any cloud resources by itself.
+
 ## Setup
 
 Python 3.11 or newer is required.
@@ -212,6 +216,26 @@ asof sync \
 
 Use `--sqlite path/to/asof.sqlite3` to override `ASOF_DATABASE_URL` and `ASOF_DATABASE_PATH` for one run. The sync command deliberately ignores the generic `DATABASE_URL` variable so it cannot write to an unrelated application database. The FRED key is only read from `FRED_API_KEY`; it is not accepted as a command argument.
 
+For a scheduled update, refresh a rolling window ending today:
+
+```bash
+asof refresh --series PAYEMS --lookback-months 24
+```
+
+To create the schema without fetching data:
+
+```bash
+asof init-db
+```
+
+## Cloud preview
+
+`render.yaml` is the first deployment plan. It keeps the API and scheduled sync as separate services, connects both to managed PostgreSQL through `ASOF_DATABASE_URL`, and asks for `FRED_API_KEY` as a secret during setup. The API does not receive the FRED key.
+
+The daily job runs at 12:00 UTC and refreshes the latest 24 calendar months of PAYEMS data. Schema setup runs before an API deployment. Nothing is deployed until the Blueprint is connected to Render and its proposed resources and pricing are approved.
+
+Before treating the preview as production, the API and sync job should use separate database roles, backups should be tested, and a full-history refresh schedule should be chosen.
+
 ## Tests
 
 ```bash
@@ -224,4 +248,4 @@ The PostgreSQL integration test is skipped unless `ASOF_TEST_DATABASE_URL` point
 
 ## Next
 
-v0.9 will add the first cloud deployment configuration: API service, managed PostgreSQL, and scheduled sync job.
+v1.0 will tighten the production setup, separate the API and sync database roles, and deploy the reviewed preview.

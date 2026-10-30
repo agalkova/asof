@@ -3,15 +3,22 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
 from asof import RevisionHistory, SQLiteRevisionStore, VintageValue
-from asof.cli import _build_store, main
+from asof.cli import _build_store, _lookback_range, main
 from asof.postgres import PostgresConnectionError
 
 
 class CliTests(unittest.TestCase):
+    def test_lookback_range_uses_complete_calendar_months(self):
+        self.assertEqual(
+            _lookback_range(date(2026, 10, 30), 24),
+            ("2024-11-01", "2026-10-30"),
+        )
+
     @patch("asof.sync.get_revision_histories_chunked")
     @patch("asof.cli.load_dotenv")
     def test_sync_stores_the_requested_range(self, mock_load_dotenv, mock_get_histories):
@@ -96,6 +103,73 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("--start must be on or before --end", error.getvalue())
+
+    @patch("asof.sync.get_revision_histories_chunked")
+    @patch("asof.cli.load_dotenv")
+    def test_refresh_stores_a_rolling_window(self, mock_load_dotenv, mock_get_histories):
+        mock_get_histories.return_value = ()
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "asof.sqlite3"
+            with patch.dict(
+                os.environ,
+                {"FRED_API_KEY": "test-key"},
+                clear=True,
+            ), patch(
+                "asof.cli._lookback_range",
+                return_value=("2024-11-01", "2026-10-30"),
+            ), redirect_stdout(io.StringIO()):
+                result = main(
+                    [
+                        "refresh",
+                        "--series",
+                        "PAYEMS",
+                        "--lookback-months",
+                        "24",
+                        "--sqlite",
+                        str(database),
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        mock_get_histories.assert_called_once_with(
+            series_id="PAYEMS",
+            observation_start="2024-11-01",
+            observation_end="2026-10-30",
+            api_key="test-key",
+        )
+
+    @patch("asof.cli.load_dotenv")
+    def test_refresh_rejects_a_lookback_before_year_one(self, mock_load_dotenv):
+        error = io.StringIO()
+
+        with redirect_stderr(error):
+            with self.assertRaises(SystemExit) as raised:
+                main(
+                    [
+                        "refresh",
+                        "--series",
+                        "PAYEMS",
+                        "--lookback-months",
+                        "999999",
+                    ]
+                )
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("--lookback-months reaches before year 1", error.getvalue())
+
+    @patch("asof.cli.load_dotenv")
+    def test_init_db_does_not_require_a_fred_key(self, mock_load_dotenv):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "asof.sqlite3"
+            output = io.StringIO()
+            with patch.dict(os.environ, {}, clear=True), redirect_stdout(output):
+                result = main(["init-db", "--sqlite", str(database)])
+            with SQLiteRevisionStore(database, read_only=True) as store:
+                self.assertEqual(store.list_observations(series_id="PAYEMS"), ())
+
+        self.assertEqual(result, 0)
+        self.assertIn("Database schema is ready.", output.getvalue())
 
     @patch("asof.cli.PostgresRevisionStore")
     @patch("asof.cli.load_dotenv")
