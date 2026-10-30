@@ -64,6 +64,10 @@ Stored histories are available through a small read-only API. It can list observ
 
 New data can be loaded from the command line. The sync command reads the FRED key from `.env`, validates the date range, and writes to SQLite by default or PostgreSQL when `ASOF_DATABASE_URL` is set.
 
+## v0.8
+
+Longer syncs now split themselves when an ALFRED response reaches the 2,000-vintage limit. Each half is retried recursively, then the complete result is stored in one database transaction. A single observation that exceeds the limit still stops with a clear error instead of saving incomplete data.
+
 ## Setup
 
 Python 3.11 or newer is required.
@@ -220,4 +224,4 @@ The PostgreSQL integration test is skipped unless `ASOF_TEST_DATABASE_URL` point
 
 ## Next
 
-v0.8 will split large ALFRED requests into safe chunks so longer ranges can sync without hitting the vintage limit.
+v0.9 will add the first cloud deployment configuration: API service, managed PostgreSQL, and scheduled sync job.

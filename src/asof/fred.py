@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import requests
 
 from .models import FredObservation, RevisionComparison, RevisionHistory, VintageValue
@@ -12,6 +14,10 @@ MAX_VINTAGE_DATES_PER_RESPONSE = 2_000
 
 class FredApiError(RuntimeError):
     """A sanitized FRED error that never includes the API-key-bearing URL."""
+
+
+class VintageLimitError(ValueError):
+    """Raised when an ALFRED response reaches its vintage-date limit."""
 
 
 def _request_json(*, params: dict[str, object], timeout: float) -> dict:
@@ -135,13 +141,67 @@ def get_revision_histories(
         if key.startswith(f"{series_id}_")
     }
     if len(vintage_dates) >= MAX_VINTAGE_DATES_PER_RESPONSE:
-        raise ValueError(
+        raise VintageLimitError(
             "ALFRED returned its 2,000-vintage limit; request a smaller range "
             "to avoid storing an incomplete history"
         )
 
     histories = tuple(_parse_revision_row(series_id=series_id, row=row) for row in observations)
     return tuple(sorted(histories, key=lambda history: history.observation_date))
+
+
+def get_revision_histories_chunked(
+    *,
+    series_id: str,
+    observation_start: str,
+    observation_end: str,
+    api_key: str,
+    timeout: float = 30,
+) -> tuple[RevisionHistory, ...]:
+    """Fetch a range, splitting it only when ALFRED reaches its vintage limit."""
+
+    try:
+        start = date.fromisoformat(observation_start)
+        end = date.fromisoformat(observation_end)
+    except ValueError:
+        raise ValueError("observation dates must use YYYY-MM-DD format") from None
+    if start.isoformat() != observation_start or end.isoformat() != observation_end:
+        raise ValueError("observation dates must use YYYY-MM-DD format")
+    if start > end:
+        raise ValueError("observation_start must be on or before observation_end")
+
+    try:
+        return get_revision_histories(
+            series_id=series_id,
+            observation_start=observation_start,
+            observation_end=observation_end,
+            api_key=api_key,
+            timeout=timeout,
+        )
+    except VintageLimitError:
+        if start == end:
+            raise VintageLimitError(
+                f"{series_id} on {observation_start} exceeds ALFRED's "
+                "2,000-vintage limit"
+            ) from None
+
+    midpoint = start + (end - start) // 2
+    right_start = midpoint + timedelta(days=1)
+    left = get_revision_histories_chunked(
+        series_id=series_id,
+        observation_start=start.isoformat(),
+        observation_end=midpoint.isoformat(),
+        api_key=api_key,
+        timeout=timeout,
+    )
+    right = get_revision_histories_chunked(
+        series_id=series_id,
+        observation_start=right_start.isoformat(),
+        observation_end=end.isoformat(),
+        api_key=api_key,
+        timeout=timeout,
+    )
+    return left + right
 
 
 def _parse_revision_row(*, series_id: str, row: dict) -> RevisionHistory:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .fred import get_revision_histories
+from .fred import get_revision_histories_chunked
 from .storage import RevisionStore
 
 
@@ -27,7 +27,7 @@ def sync_revision_histories(
 ) -> SyncResult:
     """Fetch and atomically store a range of revision histories."""
 
-    histories = get_revision_histories(
+    histories = get_revision_histories_chunked(
         series_id=series_id,
         observation_start=observation_start,
         observation_end=observation_end,

@@ -6,7 +6,7 @@ from asof.sync import sync_revision_histories
 
 
 class SyncTests(unittest.TestCase):
-    @patch("asof.sync.get_revision_histories")
+    @patch("asof.sync.get_revision_histories_chunked")
     def test_sync_fetches_and_stores_the_requested_range(self, mock_get_histories):
         mock_get_histories.return_value = (
             RevisionHistory(

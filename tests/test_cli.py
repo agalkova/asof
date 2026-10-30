@@ -12,7 +12,7 @@ from asof.postgres import PostgresConnectionError
 
 
 class CliTests(unittest.TestCase):
-    @patch("asof.sync.get_revision_histories")
+    @patch("asof.sync.get_revision_histories_chunked")
     @patch("asof.cli.load_dotenv")
     def test_sync_stores_the_requested_range(self, mock_load_dotenv, mock_get_histories):
         mock_get_histories.return_value = (

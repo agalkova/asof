@@ -3,12 +3,15 @@ from unittest.mock import Mock, patch
 
 import requests
 
+from asof import RevisionHistory, VintageValue
 from asof.fred import (
     FredApiError,
     MAX_VINTAGE_DATES_PER_RESPONSE,
+    VintageLimitError,
     compare_vintages,
     get_observation,
     get_revision_histories,
+    get_revision_histories_chunked,
     get_revision_history,
 )
 
@@ -165,11 +168,71 @@ class FredTests(unittest.TestCase):
         }
         mock_get.return_value = response
 
-        with self.assertRaisesRegex(ValueError, "2,000-vintage limit"):
+        with self.assertRaisesRegex(VintageLimitError, "2,000-vintage limit"):
             get_revision_histories(
                 series_id="PAYEMS",
                 observation_start="2008-08-01",
                 observation_end="2008-09-01",
+                api_key="test-key",
+            )
+
+    @patch("asof.fred.get_revision_histories")
+    def test_chunked_histories_split_a_capped_range(self, mock_get_histories):
+        august = RevisionHistory(
+            series_id="PAYEMS",
+            observation_date="2008-08-01",
+            revisions=(VintageValue("2008-09-05", 137473.0),),
+        )
+        september = RevisionHistory(
+            series_id="PAYEMS",
+            observation_date="2008-09-01",
+            revisions=(VintageValue("2008-10-03", 136978.0),),
+        )
+        mock_get_histories.side_effect = [
+            VintageLimitError("capped"),
+            (august,),
+            (september,),
+        ]
+
+        histories = get_revision_histories_chunked(
+            series_id="PAYEMS",
+            observation_start="2008-08-01",
+            observation_end="2008-09-01",
+            api_key="test-key",
+        )
+
+        self.assertEqual(histories, (august, september))
+        ranges = [
+            (
+                call.kwargs["observation_start"],
+                call.kwargs["observation_end"],
+            )
+            for call in mock_get_histories.call_args_list
+        ]
+        self.assertEqual(
+            ranges,
+            [
+                ("2008-08-01", "2008-09-01"),
+                ("2008-08-01", "2008-08-16"),
+                ("2008-08-17", "2008-09-01"),
+            ],
+        )
+
+    @patch("asof.fred.get_revision_histories")
+    def test_chunked_histories_report_a_single_day_that_is_still_capped(
+        self,
+        mock_get_histories,
+    ):
+        mock_get_histories.side_effect = VintageLimitError("capped")
+
+        with self.assertRaisesRegex(
+            VintageLimitError,
+            "PAYEMS on 2008-08-01 exceeds",
+        ):
+            get_revision_histories_chunked(
+                series_id="PAYEMS",
+                observation_start="2008-08-01",
+                observation_end="2008-08-01",
                 api_key="test-key",
             )
 
