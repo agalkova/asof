@@ -1,76 +1,37 @@
 # AsOf
 
-AsOf is a small Python project for querying economic data as it was known on a specific date. It uses FRED and ALFRED data to avoid treating today's revised history as if it had been available in real time.
+AsOf answers a simple question that revised datasets make surprisingly difficult:
 
-## v0.1
+> What did an economic series say on a particular date, using only the information available at the time?
 
-The first prototype answers one concrete question:
+FRED shows the latest version of a series. ALFRED preserves earlier releases. AsOf uses those historical vintages to prevent revised data from leaking into research, backtests, and retrospective analysis.
 
-> What did PAYEMS report for August 2008 as of September 12, 2008, and how does that compare with the value published today?
+## Example
 
-When verified on October 22, 2026, the result was:
+In September 2008, the reported value for August payroll employment was 137,473 thousand. The same observation now reads 137,211 thousand.
 
-| Series | Observation | As-of value | Current value | Revision |
+| Series | Observation | Known on 2008-09-12 | Current value | Revision |
 | --- | --- | ---: | ---: | ---: |
-| PAYEMS | 2008-08-01 | 137,473 thousand | 137,211 thousand | -262 thousand |
+| PAYEMS | 2008-08-01 | 137,473 | 137,211 | -262 |
 
-The code lives in `src/asof/fred.py`. The notebook in `notebooks/point_in_time_prototype.ipynb` contains the executed example.
+The result was verified against ALFRED on October 22, 2026. The executed experiment is in [`notebooks/point_in_time_prototype.ipynb`](notebooks/point_in_time_prototype.ipynb).
 
-## v0.2
+## What it does
 
-The revision-history query returns each date when a single observation's published value changed. For August 2008 PAYEMS, ALFRED contains 16 published values between September 5, 2008 and February 7, 2025.
+- Reconstructs the value known on a historical date.
+- Retrieves the complete revision history for an observation.
+- Syncs date ranges without silently truncating large ALFRED responses.
+- Stores histories in SQLite or PostgreSQL.
+- Serves stored data through a read-only FastAPI API.
+- Refreshes a rolling window from the command line.
 
-The same query was checked against five series:
+The core package is deliberately independent of any one deployment platform. SQLite keeps local work simple, PostgreSQL provides a conventional server database, and the planned AWS adapter will add DynamoDB without replacing either one.
 
-| Series | Observation | Published values | Initial value | Latest value | Total revision |
-| --- | --- | ---: | ---: | ---: | ---: |
-| PAYEMS | 2008-08-01 | 16 | 137,473 | 137,211 | -262 |
-| UNRATE | 2008-08-01 | 3 | 6.1 | 6.1 | 0.0 |
-| CPIAUCSL | 2008-08-01 | 6 | 218.880 | 218.690 | -0.190 |
-| GDPC1 | 2008-07-01 | 12 | 11,720.000 | 16,854.295 | 5,134.295 |
-| FEDFUNDS | 2008-08-01 | 1 | 2.0 | 2.0 | 0.0 |
+## Project status
 
-These values remain in each series' native units. The magnitudes are not directly comparable, and GDP history is affected by comprehensive revisions and changes to its reference year.
+The local data engine, storage adapters, API, command-line tools, tests, and container are complete through v0.9.1. The next release moves the application onto AWS as a small serverless portfolio deployment.
 
-The executed table and PAYEMS revision chart are in `notebooks/revision_history.ipynb`.
-
-## v0.3
-
-Revision histories can now be stored in SQLite and loaded without calling FRED again. The database uses three tables:
-
-```text
-series
-└── observations
-    └── vintages
-```
-
-Each vintage is keyed by its series, observation date, and publication date. Saving a refreshed history replaces the stored snapshot for that observation in one transaction.
-
-`notebooks/local_persistence.ipynb` fetches the PAYEMS example, writes all 16 vintages to `data/asof.sqlite3`, closes the connection, and verifies that the same history can be loaded after reopening the database. Local SQLite files under `data/` are ignored by Git.
-
-## v0.4
-
-A compact date range can now be fetched in one ALFRED request and saved to SQLite in one transaction. `notebooks/bulk_sync.ipynb` syncs July through September 2008 PAYEMS data: three observations and 51 vintages. ALFRED caps this response format at 2,000 vintage dates, so the client rejects a response at that limit instead of quietly storing an incomplete history.
-
-## v0.5
-
-Revision histories can also be stored in PostgreSQL. The PostgreSQL store follows the same interface as the local SQLite store, including batch transactions and replacement of refreshed histories. PostgreSQL support is optional, so the base package remains lightweight.
-
-## v0.6
-
-Stored histories are available through a small read-only API. It can list observation dates, return a full revision history, or answer the core point-in-time question for a requested `as_of` date. Both SQLite and PostgreSQL use the same endpoints.
-
-## v0.7
-
-New data can be loaded from the command line. The sync command reads the FRED key from `.env`, validates the date range, and writes to SQLite by default or PostgreSQL when `ASOF_DATABASE_URL` is set.
-
-## v0.8
-
-Longer syncs now split themselves when an ALFRED response reaches the 2,000-vintage limit. Each half is retried recursively, then the complete result is stored in one database transaction. A single observation that exceeds the limit still stops with a clear error instead of saving incomplete data.
-
-## v0.9
-
-The project is ready for a first cloud preview. It includes a production container, a Render Blueprint, a database setup command, and a rolling refresh command for scheduled updates. The Blueprint describes an API service, PostgreSQL database, and daily PAYEMS refresh, but does not create or deploy any cloud resources by itself.
+The proposed design uses API Gateway, Lambda, DynamoDB, EventBridge Scheduler, CloudWatch, CDK, and GitHub Actions with OIDC. See [`docs/aws-architecture.md`](docs/aws-architecture.md) for the decisions, data model, security boundaries, and deployment plan.
 
 ## Setup
 
@@ -83,80 +44,91 @@ pip install -e ".[notebook]"
 cp .env.example .env
 ```
 
-Add your FRED API key to `.env`, then open the notebook:
+Add your FRED API key to `.env`, then start JupyterLab:
 
 ```bash
 jupyter lab
 ```
 
-The local `.env` file is ignored by Git. Do not put an API key directly in code or notebook output.
+The local `.env` file is ignored by Git. API keys must not be placed in source code, notebooks, or command arguments.
 
-For PostgreSQL support:
+### Optional dependencies
 
 ```bash
+# PostgreSQL storage
 pip install -e ".[postgres]"
+
+# FastAPI server
+pip install -e ".[api]"
 ```
 
-Set `ASOF_DATABASE_URL` in `.env` to your PostgreSQL connection string.
+Set `ASOF_DATABASE_URL` for PostgreSQL or `ASOF_DATABASE_PATH` to choose a local SQLite file. The generic `DATABASE_URL` variable is intentionally ignored.
 
-For the API:
+## Command line
+
+Load an explicit observation range:
 
 ```bash
-pip install -e ".[api]"
+asof sync \
+  --series PAYEMS \
+  --start 2008-07-01 \
+  --end 2008-09-01
+```
+
+Refresh the latest 24 calendar months:
+
+```bash
+asof refresh --series PAYEMS --lookback-months 24
+```
+
+Create the configured database schema without fetching data:
+
+```bash
+asof init-db
+```
+
+Use `--sqlite path/to/asof.sqlite3` to override the configured database for one command. The FRED key is read only from `FRED_API_KEY`.
+
+## API
+
+Start the local API after loading data:
+
+```bash
 uvicorn asof.server:app --reload
 ```
 
-The server opens `ASOF_DATABASE_PATH` in read-only mode for SQLite. If `ASOF_DATABASE_URL` is set, it uses PostgreSQL without running schema setup, so a read-only database role can be used. Load data before starting the server. Interactive API documentation is available at `http://127.0.0.1:8000/docs` while the server is running.
+The server opens SQLite in read-only mode. PostgreSQL startup also skips schema changes, allowing the API to use a read-only database role.
+
+```text
+GET /health
+GET /series/{series_id}/observations
+GET /series/{series_id}/observations/{observation_date}
+GET /series/{series_id}/observations/{observation_date}/value?as_of=YYYY-MM-DD
+```
+
+Interactive documentation is available at `http://127.0.0.1:8000/docs` while the server is running.
 
 ## Python usage
 
 ```python
 from asof import compare_vintages
 
-result = compare_vintages(
+comparison = compare_vintages(
     series_id="PAYEMS",
     observation_date="2008-08-01",
     historical_as_of="2008-09-12",
     api_key="...",
 )
 
-print(result.historical.value)
-print(result.current.value)
-print(result.revision)
+print(comparison.historical.value)
+print(comparison.current.value)
+print(comparison.revision)
 ```
 
-To retrieve every changed value for one observation:
+Storage backends implement the same interface:
 
 ```python
-from asof import get_revision_history
-
-history = get_revision_history(
-    series_id="PAYEMS",
-    observation_date="2008-08-01",
-    api_key="...",
-)
-
-for revision in history.revisions:
-    print(revision.vintage_date, revision.value)
-```
-
-To keep the result locally:
-
-```python
-from asof import SQLiteRevisionStore
-
-with SQLiteRevisionStore("data/asof.sqlite3") as store:
-    store.save_history(history)
-    restored = store.load_history(
-        series_id="PAYEMS",
-        observation_date="2008-08-01",
-    )
-```
-
-To fetch and store a range:
-
-```python
-from asof import sync_revision_histories
+from asof import SQLiteRevisionStore, sync_revision_histories
 
 with SQLiteRevisionStore("data/asof.sqlite3") as store:
     result = sync_revision_histories(
@@ -168,84 +140,21 @@ with SQLiteRevisionStore("data/asof.sqlite3") as store:
     )
 ```
 
-The same sync works with PostgreSQL:
-
-```python
-import os
-
-from dotenv import load_dotenv
-
-from asof import PostgresRevisionStore, sync_revision_histories
-
-load_dotenv()
-
-with PostgresRevisionStore(os.environ["ASOF_DATABASE_URL"]) as store:
-    result = sync_revision_histories(
-        store=store,
-        series_id="PAYEMS",
-        observation_start="2008-07-01",
-        observation_end="2008-09-01",
-        api_key=os.environ["FRED_API_KEY"],
-    )
-```
-
-To query the value known on September 12, 2008:
-
-```bash
-curl "http://127.0.0.1:8000/series/PAYEMS/observations/2008-08-01/value?as_of=2008-09-12"
-```
-
-The other read endpoints are:
-
-```text
-GET /health
-GET /series/{series_id}/observations
-GET /series/{series_id}/observations/{observation_date}
-```
-
-## Command-line sync
-
-To load a compact observation range into the configured database:
-
-```bash
-asof sync \
-  --series PAYEMS \
-  --start 2008-07-01 \
-  --end 2008-09-01
-```
-
-Use `--sqlite path/to/asof.sqlite3` to override `ASOF_DATABASE_URL` and `ASOF_DATABASE_PATH` for one run. The sync command deliberately ignores the generic `DATABASE_URL` variable so it cannot write to an unrelated application database. The FRED key is only read from `FRED_API_KEY`; it is not accepted as a command argument.
-
-For a scheduled update, refresh a rolling window ending today:
-
-```bash
-asof refresh --series PAYEMS --lookback-months 24
-```
-
-To create the schema without fetching data:
-
-```bash
-asof init-db
-```
-
-## Cloud preview
-
-`render.yaml` is the first deployment plan. It keeps the API and scheduled sync as separate services, connects both to managed PostgreSQL through `ASOF_DATABASE_URL`, and asks for `FRED_API_KEY` as a secret during setup. The API does not receive the FRED key.
-
-The daily job runs at 12:00 UTC and refreshes the latest 24 calendar months of PAYEMS data. Schema setup runs before an API deployment. Nothing is deployed until the Blueprint is connected to Render and its proposed resources and pricing are approved.
-
-Before treating the preview as production, the API and sync job should use separate database roles, backups should be tested, and a full-history refresh schedule should be chosen.
-
 ## Tests
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-The tests use mocked responses and do not require an API key or network access.
+Unit tests use mocked FRED responses and require neither a network connection nor an API key. PostgreSQL integration tests run only when `ASOF_TEST_DATABASE_URL` points to a disposable test database.
 
-The PostgreSQL integration test is skipped unless `ASOF_TEST_DATABASE_URL` points to a test database. It creates uniquely named records but should never be run against production.
+GitHub Actions runs the suite on Python 3.11 and 3.13 for every push and pull request.
 
-## Next
+## Documentation
 
-v1.0 will tighten the production setup, separate the API and sync database roles, and deploy the reviewed preview.
+- [`docs/aws-architecture.md`](docs/aws-architecture.md) — planned v1.0 AWS design.
+- [`docs/release-history.md`](docs/release-history.md) — development history from the first notebook onward.
+
+## License
+
+This project is available under the terms in [`LICENSE`](LICENSE).

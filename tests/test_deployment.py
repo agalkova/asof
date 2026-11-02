@@ -13,16 +13,22 @@ class DeploymentConfigTests(unittest.TestCase):
         self.assertIn(".git", ignored)
         self.assertIn("data", ignored)
 
-    def test_render_services_use_the_asof_database_variable(self):
-        blueprint = (ROOT / "render.yaml").read_text()
+    def test_container_runs_as_an_unprivileged_user(self):
+        dockerfile = (ROOT / "Dockerfile").read_text()
 
-        self.assertIn("healthCheckPath: /health", blueprint)
-        self.assertIn("preDeployCommand: asof init-db", blueprint)
-        self.assertIn("asof refresh --series PAYEMS --lookback-months 24", blueprint)
-        self.assertIn("key: ASOF_DATABASE_URL", blueprint)
-        self.assertNotIn("key: DATABASE_URL", blueprint)
-        self.assertIn("key: FRED_API_KEY", blueprint)
-        self.assertIn("sync: false", blueprint)
+        self.assertIn("useradd --create-home --uid 10001 asof", dockerfile)
+        self.assertIn("USER asof", dockerfile)
+        self.assertIn('CMD ["python", "-m", "asof.run_server"]', dockerfile)
+
+    def test_legacy_render_blueprint_is_removed(self):
+        self.assertFalse((ROOT / "render.yaml").exists())
+
+    def test_ci_runs_the_test_suite_without_cloud_permissions(self):
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+
+        self.assertIn("contents: read", workflow)
+        self.assertIn("python -m unittest discover -s tests -v", workflow)
+        self.assertNotIn("id-token: write", workflow)
 
 
 if __name__ == "__main__":
