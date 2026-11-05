@@ -39,7 +39,11 @@ class RevisionStore(Protocol):
     """Storage behavior shared by synchronization and read APIs."""
 
     def save_histories(self, histories: Iterable[RevisionHistory]) -> int:
-        """Store several histories and return the number of vintages written."""
+        """Store histories and return the number of vintages written.
+
+        Each observation history must become visible atomically. A backend may
+        provide the stronger guarantee that the entire batch is atomic.
+        """
         ...
 
     def load_history(self, *, series_id: str, observation_date: str) -> RevisionHistory | None:

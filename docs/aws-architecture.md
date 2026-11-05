@@ -1,6 +1,6 @@
 # AWS architecture
 
-This document describes the target architecture for v1.0. These resources do not exist yet; deployment begins only after the infrastructure code, IAM policies, and cost controls have been reviewed.
+This document describes a planned target architecture for v1.0. None of these AWS resources are deployed today. Deployment begins only after the storage adapter, infrastructure code, IAM policies, and cost controls have been implemented and reviewed.
 
 ## Goals
 
@@ -52,21 +52,43 @@ The scheduler uses a retry policy and an SQS dead-letter queue. The sync functio
 
 ### DynamoDB data model
 
-One table stores series metadata, observation summaries, and individual vintages.
+One planned table stores series metadata, an active-generation manifest for each observation, and immutable vintage generations.
 
-| Item | Partition key | Sort key |
-| --- | --- | --- |
-| Series metadata | `SERIES#PAYEMS` | `META` |
-| Observation summary | `SERIES#PAYEMS` | `OBS#2008-08-01` |
-| Vintage value | `SERIES#PAYEMS` | `VINTAGE#2008-08-01#2008-09-05` |
+| Item | Partition key | Sort key | Important attributes |
+| --- | --- | --- | --- |
+| Series metadata | `SERIES#PAYEMS` | `META` | title, units, frequency |
+| Observation manifest | `SERIES#PAYEMS` | `OBS#2008-08-01` | `active_generation`, vintage count, updated time |
+| Vintage value | `SERIES#PAYEMS#OBS#2008-08-01#GEN#<id>` | `VINTAGE#2008-09-05` | value |
+| Cleanup record | `SERIES#PAYEMS` | `RETIRE#2008-08-01#<id>` | generation key, `delete_after` |
 
-This layout supports the current access patterns without a table scan:
+The manifest is a per-observation pointer, not a copy of the revision history. Vintage items are never changed after their generation is written. This layout supports the current access patterns without a table scan:
 
-- List observations with an `OBS#` key prefix.
-- Load a full revision history with a `VINTAGE#<observation-date>#` key prefix.
-- Find the latest vintage on or before an as-of date with a bounded, descending query and a limit of one.
+- List observations by querying `SERIES#<id>` with an `OBS#` sort-key prefix.
+- Load a full history by reading the manifest and querying its active generation.
+- Find the latest vintage on or before an as-of date by reading the manifest, then querying the active generation with an upper sort-key bound, descending order, and a limit of one.
 
-The PostgreSQL and SQLite stores remain supported. DynamoDB will implement the same `RevisionStore` interface so business logic stays independent of AWS.
+The manifest `GetItem` uses `ConsistentRead=true`. [DynamoDB defaults to eventually consistent reads](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html), which could briefly return the previous pointer after a completed sync; a strongly consistent read ensures the request pins the latest successfully published generation. The manifest is stored in the base table because global secondary indexes do not support strongly consistent reads.
+
+The PostgreSQL and SQLite stores remain supported and keep their existing whole-batch transactions. The planned DynamoDB adapter will implement the same `RevisionStore` interface, whose portable guarantee is narrower: one observation history becomes visible atomically, while a multi-observation sync may become visible observation by observation.
+
+### Publishing a generation
+
+Each observation is published independently:
+
+1. Read its manifest with a strongly consistent read and remember the current generation, `G0`.
+2. Write the complete replacement history under a new immutable generation, `G1`. Retried writes use the same generation identifier and values, so this staging step is idempotent.
+3. Update the manifest pointer from `G0` to `G1` with a [conditional `UpdateItem`](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.ConditionExpressions.html). The condition requires `active_generation = G0`; the first publication instead requires that `active_generation` does not exist.
+4. If the condition fails, another sync has already changed the pointer. The losing sync must not overwrite it: it re-reads the manifest before deciding whether another refresh is needed, and its unused generation is retired for later cleanup.
+
+The conditional manifest update is the commit point. Readers see either the complete old generation or the complete new generation, and two overlapping syncs that started from the same pointer cannot overwrite one another.
+
+### Retiring old generations
+
+Old and unused generations are recorded for cleanup with a `delete_after` time **30 minutes after** the manifest update or failed publication. Cleanup never removes the active generation and performs a strongly consistent manifest read immediately before deleting a retired generation.
+
+The grace period is deliberately longer than [Lambda's 15-minute maximum runtime](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html) for the planned on-demand functions. A read Lambda that obtained `G0` immediately before the pointer moved to `G1` therefore has enough time to finish querying `G0`; the extra 15 minutes provides a conservative buffer for scheduling and cleanup clock differences. Cleanup may run later than `delete_after`, but never earlier.
+
+Cleanup metadata is durable and idempotent, so a failed cleanup can be retried during a later scheduled sync. A generation created by a losing overlapping sync follows the same 30-minute rule even though no reader should have received its identifier.
 
 ## Infrastructure and delivery
 
@@ -108,3 +130,5 @@ The first deployment remains manual. Automatic production deployment can be enab
 4. Add GitHub OIDC deployment with a protected environment.
 5. Review the synthesized CloudFormation template and estimated resources.
 6. Deploy manually, run smoke tests, and enable the daily schedule.
+
+Until those steps are complete, this document is a design proposal rather than a description of running infrastructure.
