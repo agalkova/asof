@@ -25,7 +25,7 @@ def sync_revision_histories(
     observation_end: str,
     api_key: str,
 ) -> SyncResult:
-    """Fetch and atomically store a range of revision histories."""
+    """Fetch and store a range, publishing each observation atomically."""
 
     histories = get_revision_histories_chunked(
         series_id=series_id,

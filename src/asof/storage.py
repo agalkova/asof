@@ -9,7 +9,7 @@ from threading import RLock
 from types import TracebackType
 from typing import Protocol
 
-from .models import RevisionHistory, VintageValue
+from .models import AsOfLookup, RevisionHistory, VintageValue
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS series (
@@ -39,11 +39,25 @@ class RevisionStore(Protocol):
     """Storage behavior shared by synchronization and read APIs."""
 
     def save_histories(self, histories: Iterable[RevisionHistory]) -> int:
-        """Store several histories and return the number of vintages written."""
+        """Store histories and return the number of vintages written.
+
+        Each observation history must become visible atomically. A backend may
+        provide the stronger guarantee that the entire batch is atomic.
+        """
         ...
 
     def load_history(self, *, series_id: str, observation_date: str) -> RevisionHistory | None:
         """Load one stored history."""
+        ...
+
+    def lookup_value_as_of(
+        self,
+        *,
+        series_id: str,
+        observation_date: str,
+        as_of_date: str,
+    ) -> AsOfLookup:
+        """Find the latest vintage available on a date without loading its history."""
         ...
 
     def list_observations(self, *, series_id: str) -> tuple[str, ...]:
@@ -155,6 +169,37 @@ class SQLiteRevisionStore:
                 for row in rows
             ),
         )
+
+    def lookup_value_as_of(
+        self,
+        *,
+        series_id: str,
+        observation_date: str,
+        as_of_date: str,
+    ) -> AsOfLookup:
+        """Find one value with a bounded query, preserving missing-state details."""
+
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT v.vintage_date, v.value
+                FROM observations AS o
+                LEFT JOIN vintages AS v
+                  ON v.series_id = o.series_id
+                 AND v.observation_date = o.observation_date
+                 AND v.vintage_date <= ?
+                WHERE o.series_id = ? AND o.observation_date = ?
+                ORDER BY v.vintage_date DESC
+                LIMIT 1
+                """,
+                (as_of_date, series_id, observation_date),
+            ).fetchone()
+        if row is None:
+            return AsOfLookup(observation_exists=False, revision=None)
+        revision = None
+        if row["vintage_date"] is not None:
+            revision = VintageValue(vintage_date=row["vintage_date"], value=row["value"])
+        return AsOfLookup(observation_exists=True, revision=revision)
 
     def list_observations(self, *, series_id: str) -> tuple[str, ...]:
         """Return stored observation dates for a series in ascending order."""

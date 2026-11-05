@@ -8,7 +8,7 @@ from threading import RLock
 from types import TracebackType
 from typing import Any
 
-from .models import RevisionHistory, VintageValue
+from .models import AsOfLookup, RevisionHistory, VintageValue
 
 SCHEMA = (
     """
@@ -157,6 +157,40 @@ class PostgresRevisionStore:
                 for row in rows
             ),
         )
+
+    def lookup_value_as_of(
+        self,
+        *,
+        series_id: str,
+        observation_date: str,
+        as_of_date: str,
+    ) -> AsOfLookup:
+        """Find one value with a bounded query, preserving missing-state details."""
+
+        with self._lock:
+            with self._connection.transaction():
+                with self._connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT v.vintage_date, v.value
+                        FROM observations AS o
+                        LEFT JOIN vintages AS v
+                          ON v.series_id = o.series_id
+                         AND v.observation_date = o.observation_date
+                         AND v.vintage_date <= %s
+                        WHERE o.series_id = %s AND o.observation_date = %s
+                        ORDER BY v.vintage_date DESC
+                        LIMIT 1
+                        """,
+                        (as_of_date, series_id, observation_date),
+                    )
+                    row = cursor.fetchone()
+        if row is None:
+            return AsOfLookup(observation_exists=False, revision=None)
+        revision = None
+        if row[0] is not None:
+            revision = VintageValue(vintage_date=_iso_date(row[0]), value=float(row[1]))
+        return AsOfLookup(observation_exists=True, revision=revision)
 
     def list_observations(self, *, series_id: str) -> tuple[str, ...]:
         """Return stored observation dates for a series in ascending order."""

@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +30,23 @@ class DeploymentConfigTests(unittest.TestCase):
         self.assertIn("contents: read", workflow)
         self.assertIn("python -m unittest discover -s tests -v", workflow)
         self.assertNotIn("id-token: write", workflow)
+
+    def test_ci_runs_postgres_integration_tests(self):
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+
+        self.assertIn("image: postgres:16-alpine", workflow)
+        self.assertIn("ASOF_TEST_DATABASE_URL", workflow)
+        self.assertIn("pg_isready", workflow)
+
+    def test_package_version_has_one_source(self):
+        configuration = tomllib.loads((ROOT / "pyproject.toml").read_text())
+
+        self.assertEqual(configuration["project"]["dynamic"], ["version"])
+        self.assertNotIn("version", configuration["project"])
+        self.assertEqual(
+            configuration["tool"]["setuptools"]["dynamic"]["version"]["attr"],
+            "asof._version.__version__",
+        )
 
 
 if __name__ == "__main__":

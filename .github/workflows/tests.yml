@@ -15,6 +15,22 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: asof
+          POSTGRES_PASSWORD: asof-test
+          POSTGRES_DB: asof_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U asof -d asof_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      ASOF_TEST_DATABASE_URL: postgresql://asof:asof-test@localhost:5432/asof_test
     strategy:
       fail-fast: false
       matrix:

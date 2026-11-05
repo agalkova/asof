@@ -57,6 +57,38 @@ class SQLiteRevisionStoreTests(unittest.TestCase):
 
         self.assertEqual(dates, ("2008-08-01", "2008-09-01"))
 
+    def test_point_in_time_lookup_returns_one_bounded_value(self):
+        with SQLiteRevisionStore(":memory:") as store:
+            store.save_history(history())
+
+            lookup = store.lookup_value_as_of(
+                series_id="PAYEMS",
+                observation_date="2008-08-01",
+                as_of_date="2008-09-12",
+            )
+
+        self.assertTrue(lookup.observation_exists)
+        self.assertEqual(lookup.revision, VintageValue("2008-09-05", 137473.0))
+
+    def test_point_in_time_lookup_distinguishes_missing_states(self):
+        with SQLiteRevisionStore(":memory:") as store:
+            store.save_history(history())
+            before_release = store.lookup_value_as_of(
+                series_id="PAYEMS",
+                observation_date="2008-08-01",
+                as_of_date="2008-09-04",
+            )
+            missing = store.lookup_value_as_of(
+                series_id="PAYEMS",
+                observation_date="1999-01-01",
+                as_of_date="2008-09-12",
+            )
+
+        self.assertTrue(before_release.observation_exists)
+        self.assertIsNone(before_release.revision)
+        self.assertFalse(missing.observation_exists)
+        self.assertIsNone(missing.revision)
+
     def test_multiple_histories_are_saved_together(self):
         histories = (
             history(observation_date="2008-08-01"),

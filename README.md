@@ -20,6 +20,7 @@ The result was verified against ALFRED on October 22, 2026. The executed experim
 
 - Reconstructs the value known on a historical date.
 - Retrieves the complete revision history for an observation.
+- Serves point-in-time values with a bounded storage query instead of loading a full history.
 - Syncs date ranges without silently truncating large ALFRED responses.
 - Stores histories in SQLite or PostgreSQL.
 - Serves stored data through a read-only FastAPI API.
@@ -29,9 +30,9 @@ The core package is deliberately independent of any one deployment platform. SQL
 
 ## Project status
 
-The local data engine, storage adapters, API, command-line tools, tests, and container are complete through v0.9.1. The next release moves the application onto AWS as a small serverless portfolio deployment.
+The local data engine, storage adapters, API, command-line tools, tests, and container are complete through v0.10.0. This release hardens point-in-time reads, validates public series identifiers, uses one package version across runtime and build metadata, and exercises PostgreSQL against a real service in CI.
 
-The proposed design uses API Gateway, Lambda, DynamoDB, EventBridge Scheduler, CloudWatch, CDK, and GitHub Actions with OIDC. See [`docs/aws-architecture.md`](docs/aws-architecture.md) for the decisions, data model, security boundaries, and deployment plan.
+AWS remains the planned portfolio deployment, not a running environment. The proposed design uses API Gateway, Lambda, DynamoDB, EventBridge Scheduler, CloudWatch, CDK, and GitHub Actions with OIDC. See [`docs/aws-architecture.md`](docs/aws-architecture.md) for the decisions, data model, publication protocol, security boundaries, and deployment plan.
 
 ## Setup
 
@@ -146,9 +147,9 @@ with SQLiteRevisionStore("data/asof.sqlite3") as store:
 python -m unittest discover -s tests -v
 ```
 
-Unit tests use mocked FRED responses and require neither a network connection nor an API key. PostgreSQL integration tests run only when `ASOF_TEST_DATABASE_URL` points to a disposable test database.
+Unit tests use mocked FRED responses and require neither a network connection nor an API key. Local PostgreSQL integration tests run when `ASOF_TEST_DATABASE_URL` points to a disposable test database.
 
-GitHub Actions runs the suite on Python 3.11 and 3.13 for every push and pull request.
+GitHub Actions starts PostgreSQL and runs the full suite, including the integration tests, on Python 3.11 and 3.13 for every push and pull request.
 
 ## Documentation
 
