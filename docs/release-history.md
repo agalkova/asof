@@ -42,6 +42,6 @@ Documentation now presents the product clearly, records the proposed AWS archite
 
 ## v0.10.0 — Read-path hardening
 
-Point-in-time API requests now use a bounded storage query instead of loading an observation's full revision history. Public handlers validate series identifiers, package and API versions come from one source, and GitHub Actions runs the PostgreSQL integration tests against a real PostgreSQL service.
+Point-in-time API requests now use a direct storage lookup instead of loading an observation's full revision history. Public handlers validate series identifiers, package and API versions come from one source, and GitHub Actions runs the PostgreSQL integration tests against a real PostgreSQL service.
 
 The planned DynamoDB contract now publishes immutable generations through a strongly consistent, conditional manifest pointer. SQLite and PostgreSQL retain their existing whole-batch transaction behavior. The AWS design remains a plan only; this release does not deploy cloud resources.
