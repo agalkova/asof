@@ -2,9 +2,24 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date
 from math import isfinite
+
+
+SERIES_ID_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}"
+_SERIES_ID = re.compile(rf"^{SERIES_ID_PATTERN}$")
+
+
+def validate_series_id(value: str) -> str:
+    """Return a safe FRED series ID or raise ``ValueError``."""
+
+    if not _SERIES_ID.fullmatch(value):
+        raise ValueError(
+            "series_id must be 1-120 letters, numbers, dots, underscores, or hyphens"
+        )
+    return value
 
 
 def _validate_iso_date(value: str, field_name: str) -> None:
@@ -27,8 +42,7 @@ class FredObservation:
     realtime_end: str
 
     def __post_init__(self) -> None:
-        if not self.series_id:
-            raise ValueError("series_id must not be empty")
+        validate_series_id(self.series_id)
         _validate_iso_date(self.observation_date, "observation_date")
         _validate_iso_date(self.realtime_start, "realtime_start")
         _validate_iso_date(self.realtime_end, "realtime_end")
@@ -50,6 +64,18 @@ class VintageValue:
 
 
 @dataclass(frozen=True)
+class AsOfLookup:
+    """One bounded point-in-time lookup and whether its observation exists."""
+
+    observation_exists: bool
+    revision: VintageValue | None
+
+    def __post_init__(self) -> None:
+        if not self.observation_exists and self.revision is not None:
+            raise ValueError("a missing observation cannot have a revision")
+
+
+@dataclass(frozen=True)
 class RevisionHistory:
     """Every published value change for one series observation."""
 
@@ -58,8 +84,7 @@ class RevisionHistory:
     revisions: tuple[VintageValue, ...]
 
     def __post_init__(self) -> None:
-        if not self.series_id:
-            raise ValueError("series_id must not be empty")
+        validate_series_id(self.series_id)
         _validate_iso_date(self.observation_date, "observation_date")
         if not self.revisions:
             raise ValueError("revisions must not be empty")

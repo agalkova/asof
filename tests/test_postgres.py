@@ -25,6 +25,8 @@ class FakeCursor:
         return self.connection.results.pop(0)
 
     def fetchone(self):
+        if self.connection.single_results:
+            return self.connection.single_results.pop(0)
         return (1,)
 
 
@@ -33,6 +35,7 @@ class FakeConnection:
         self.executed = []
         self.executed_many = []
         self.results = []
+        self.single_results = []
         self.transactions = 0
         self.closed = False
 
@@ -122,6 +125,41 @@ class PostgresRevisionStoreTests(unittest.TestCase):
         actual = self.store.list_observations(series_id="PAYEMS")
 
         self.assertEqual(actual, ("2008-08-01", "2008-09-01"))
+
+    def test_point_in_time_lookup_uses_a_bounded_descending_query(self):
+        self.connection.single_results.append((date(2008, 9, 5), 137473.0))
+
+        actual = self.store.lookup_value_as_of(
+            series_id="PAYEMS",
+            observation_date="2008-08-01",
+            as_of_date="2008-09-12",
+        )
+
+        statement, params = self.connection.executed[-1]
+        self.assertTrue(actual.observation_exists)
+        self.assertEqual(actual.revision, VintageValue("2008-09-05", 137473.0))
+        self.assertIn("ORDER BY v.vintage_date DESC", statement)
+        self.assertIn("LIMIT 1", statement)
+        self.assertEqual(params, ("2008-09-12", "PAYEMS", "2008-08-01"))
+
+    def test_point_in_time_lookup_distinguishes_missing_states(self):
+        self.connection.single_results.extend([(None, None), None])
+
+        before_release = self.store.lookup_value_as_of(
+            series_id="PAYEMS",
+            observation_date="2008-08-01",
+            as_of_date="2008-09-04",
+        )
+        missing = self.store.lookup_value_as_of(
+            series_id="PAYEMS",
+            observation_date="1999-01-01",
+            as_of_date="2008-09-12",
+        )
+
+        self.assertTrue(before_release.observation_exists)
+        self.assertIsNone(before_release.revision)
+        self.assertFalse(missing.observation_exists)
+        self.assertIsNone(missing.revision)
 
 
 if __name__ == "__main__":

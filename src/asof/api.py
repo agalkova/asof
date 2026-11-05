@@ -4,11 +4,25 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import date
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Path
 from pydantic import BaseModel
 
+from ._version import __version__
+from .models import SERIES_ID_PATTERN
 from .storage import RevisionStore
+
+
+SeriesId = Annotated[
+    str,
+    Path(
+        min_length=1,
+        max_length=120,
+        pattern=rf"^{SERIES_ID_PATTERN}$",
+        description="FRED series ID",
+    ),
+]
 
 
 class ObservationDatesResponse(BaseModel):
@@ -47,7 +61,7 @@ def create_app(store: RevisionStore, *, close_store: bool = False) -> FastAPI:
         if close_store:
             store.close()
 
-    app = FastAPI(title="AsOf API", version="0.6.0", lifespan=lifespan)
+    app = FastAPI(title="AsOf API", version=__version__, lifespan=lifespan)
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -59,7 +73,7 @@ def create_app(store: RevisionStore, *, close_store: bool = False) -> FastAPI:
         "/series/{series_id}/observations",
         response_model=ObservationDatesResponse,
     )
-    def list_observations(series_id: str) -> ObservationDatesResponse:
+    def list_observations(series_id: SeriesId) -> ObservationDatesResponse:
         observations = store.list_observations(series_id=series_id)
         return ObservationDatesResponse(
             series_id=series_id,
@@ -71,7 +85,7 @@ def create_app(store: RevisionStore, *, close_store: bool = False) -> FastAPI:
         response_model=RevisionHistoryResponse,
     )
     def get_revision_history(
-        series_id: str,
+        series_id: SeriesId,
         observation_date: date,
     ) -> RevisionHistoryResponse:
         history = store.load_history(
@@ -103,31 +117,31 @@ def create_app(store: RevisionStore, *, close_store: bool = False) -> FastAPI:
         response_model=AsOfValueResponse,
     )
     def get_value_as_of(
-        series_id: str,
+        series_id: SeriesId,
         observation_date: date,
         as_of: date,
     ) -> AsOfValueResponse:
-        history = store.load_history(
+        lookup = store.lookup_value_as_of(
             series_id=series_id,
             observation_date=observation_date.isoformat(),
+            as_of_date=as_of.isoformat(),
         )
-        if history is None:
+        if not lookup.observation_exists:
             raise HTTPException(
                 status_code=404,
                 detail=f"No stored history for {series_id} on {observation_date}",
             )
-        revision = history.value_as_of(as_of.isoformat())
-        if revision is None:
+        if lookup.revision is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"{series_id} for {observation_date} was not published by {as_of}",
             )
         return AsOfValueResponse(
-            series_id=history.series_id,
+            series_id=series_id,
             observation_date=observation_date,
             as_of=as_of,
-            vintage_date=date.fromisoformat(revision.vintage_date),
-            value=revision.value,
+            vintage_date=date.fromisoformat(lookup.revision.vintage_date),
+            value=lookup.revision.value,
         )
 
     return app

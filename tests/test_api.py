@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from asof import RevisionHistory, SQLiteRevisionStore, VintageValue
+from asof import RevisionHistory, SQLiteRevisionStore, VintageValue, __version__
 from asof.api import create_app
 
 
@@ -69,10 +69,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(payload["revisions"]), 2)
 
     def test_value_as_of_uses_the_latest_available_vintage(self):
-        response = self.client.get(
-            "/series/PAYEMS/observations/2008-08-01/value",
-            params={"as_of": "2008-09-12"},
-        )
+        with patch.object(
+            self.store,
+            "load_history",
+            side_effect=AssertionError("point lookup loaded the full history"),
+        ):
+            response = self.client.get(
+                "/series/PAYEMS/observations/2008-08-01/value",
+                params={"as_of": "2008-09-12"},
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["vintage_date"], "2008-09-05")
@@ -95,6 +100,17 @@ class ApiTests(unittest.TestCase):
         response = self.client.get("/series/PAYEMS/observations/not-a-date")
 
         self.assertEqual(response.status_code, 422)
+
+    def test_invalid_series_id_returns_422(self):
+        response = self.client.get("/series/BAD!ID/observations")
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_openapi_uses_the_package_version(self):
+        response = self.client.get("/openapi.json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["info"]["version"], __version__)
 
 
 if __name__ == "__main__":

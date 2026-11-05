@@ -1,5 +1,7 @@
 """Point-in-time economic data helpers."""
 
+from ._version import __version__
+
 from .fred import (
     FredApiError,
     VintageLimitError,
@@ -10,6 +12,7 @@ from .fred import (
     get_revision_history,
 )
 from .models import (
+    AsOfLookup,
     FredObservation,
     RevisionComparison,
     RevisionHistory,
@@ -20,6 +23,8 @@ from .storage import RevisionStore, SQLiteRevisionStore
 from .sync import SyncResult, sync_revision_histories
 
 __all__ = [
+    "__version__",
+    "AsOfLookup",
     "FredApiError",
     "FredObservation",
     "VintageLimitError",

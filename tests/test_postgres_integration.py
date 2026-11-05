@@ -36,8 +36,15 @@ class PostgresIntegrationTests(unittest.TestCase):
                 series_id=series_id,
                 observation_date="2008-08-01",
             )
+            lookup = store.lookup_value_as_of(
+                series_id=series_id,
+                observation_date="2008-08-01",
+                as_of_date="2008-09-12",
+            )
 
         self.assertEqual(actual, expected)
+        self.assertTrue(lookup.observation_exists)
+        self.assertEqual(lookup.revision, VintageValue("2008-09-05", 137473.0))
 
     def test_failed_batch_is_rolled_back(self):
         series_id = f"TEST_{uuid4().hex}"

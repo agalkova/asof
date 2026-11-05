@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asof-economic-data"
-version = "0.9.1"
+dynamic = ["version"]
 description = "Point-in-time queries for revised economic data"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,3 +35,6 @@ api = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "asof._version.__version__" }
