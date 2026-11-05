@@ -20,7 +20,7 @@ The result was verified against ALFRED on October 22, 2026. The executed experim
 
 - Reconstructs the value known on a historical date.
 - Retrieves the complete revision history for an observation.
-- Serves point-in-time values with a bounded storage query instead of loading a full history.
+- Serves point-in-time values with a direct storage lookup instead of loading a full history.
 - Syncs date ranges without silently truncating large ALFRED responses.
 - Stores histories in SQLite or PostgreSQL.
 - Serves stored data through a read-only FastAPI API.

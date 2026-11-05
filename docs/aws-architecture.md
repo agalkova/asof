@@ -76,19 +76,24 @@ The PostgreSQL and SQLite stores remain supported and keep their existing whole-
 Each observation is published independently:
 
 1. Read its manifest with a strongly consistent read and remember the current generation, `G0`.
-2. Write the complete replacement history under a new immutable generation, `G1`. Retried writes use the same generation identifier and values, so this staging step is idempotent.
-3. Update the manifest pointer from `G0` to `G1` with a [conditional `UpdateItem`](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.ConditionExpressions.html). The condition requires `active_generation = G0`; the first publication instead requires that `active_generation` does not exist.
-4. If the condition fails, another sync has already changed the pointer. The losing sync must not overwrite it: it re-reads the manifest before deciding whether another refresh is needed, and its unused generation is retired for later cleanup.
+2. Write the `RETIRE` record for the new generation, `G1`, before writing any vintage items. Its initial `delete_after` is 30 minutes after staging begins, so a crash during staging still leaves a durable cleanup record.
+3. Write the complete replacement history under the immutable `G1` partition. Retried writes use the same generation identifier and values, so this staging step is idempotent.
+4. Publish `G1` with a transaction containing the [conditional manifest update](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.ConditionExpressions.html) and, when `G0` exists, an update to `G0`'s `RETIRE` record. The manifest condition requires `active_generation = G0`; the first publication instead requires that `active_generation` does not exist. The `G0` cleanup deadline becomes 30 minutes after this publication.
+5. If the condition fails, another sync has already changed the pointer. The losing sync must not overwrite it: it re-reads the manifest before deciding whether another refresh is needed, and the prewritten `G1` record makes its unused generation eligible for later cleanup.
 
 The conditional manifest update is the commit point. Readers see either the complete old generation or the complete new generation, and two overlapping syncs that started from the same pointer cannot overwrite one another.
 
 ### Retiring old generations
 
-Old and unused generations are recorded for cleanup with a `delete_after` time **30 minutes after** the manifest update or failed publication. Cleanup never removes the active generation and performs a strongly consistent manifest read immediately before deleting a retired generation.
+Every generation receives a cleanup record before staging starts. This ordering means a sync that crashes after writing some or all of `G1`, but before updating the manifest, cannot leave an untracked orphan.
+
+The pre-staging record is due 30 minutes after staging begins. If the generation becomes active, cleanup keeps the record but skips deletion. When a later sync replaces that generation, the same transaction as the conditional manifest update moves its `delete_after` time to **30 minutes after** the new publication.
+
+Cleanup performs a strongly consistent manifest read immediately before deleting a due generation and never removes the active generation. Deleting vintages and their cleanup record is idempotent, so an interrupted cleanup can be retried.
 
 The grace period is deliberately longer than [Lambda's 15-minute maximum runtime](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html) for the planned on-demand functions. A read Lambda that obtained `G0` immediately before the pointer moved to `G1` therefore has enough time to finish querying `G0`; the extra 15 minutes provides a conservative buffer for scheduling and cleanup clock differences. Cleanup may run later than `delete_after`, but never earlier.
 
-Cleanup metadata is durable and idempotent, so a failed cleanup can be retried during a later scheduled sync. A generation created by a losing overlapping sync follows the same 30-minute rule even though no reader should have received its identifier.
+A generation created by a losing overlapping sync follows the same 30-minute rule even though no reader should have received its identifier.
 
 ## Infrastructure and delivery
 

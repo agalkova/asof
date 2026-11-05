@@ -46,6 +46,34 @@ class PostgresIntegrationTests(unittest.TestCase):
         self.assertTrue(lookup.observation_exists)
         self.assertEqual(lookup.revision, VintageValue("2008-09-05", 137473.0))
 
+    def test_point_in_time_lookup_before_first_release(self):
+        series_id = f"TEST_{uuid4().hex}"
+        expected = history(series_id, "2008-08-01")
+
+        with PostgresRevisionStore(TEST_DATABASE_URL) as store:
+            store.save_history(expected)
+            lookup = store.lookup_value_as_of(
+                series_id=series_id,
+                observation_date=expected.observation_date,
+                as_of_date="2008-09-04",
+            )
+
+        self.assertTrue(lookup.observation_exists)
+        self.assertIsNone(lookup.revision)
+
+    def test_point_in_time_lookup_for_missing_observation(self):
+        series_id = f"TEST_{uuid4().hex}"
+
+        with PostgresRevisionStore(TEST_DATABASE_URL) as store:
+            lookup = store.lookup_value_as_of(
+                series_id=series_id,
+                observation_date="2008-08-01",
+                as_of_date="2008-09-12",
+            )
+
+        self.assertFalse(lookup.observation_exists)
+        self.assertIsNone(lookup.revision)
+
     def test_failed_batch_is_rolled_back(self):
         series_id = f"TEST_{uuid4().hex}"
         first = history(series_id, "2008-08-01")
