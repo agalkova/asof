@@ -104,6 +104,29 @@ class CliTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("--start must be on or before --end", error.getvalue())
 
+    @patch("asof.cli.load_dotenv")
+    def test_sync_rejects_an_invalid_series_id(self, mock_load_dotenv):
+        for series_id in ("PAY EMS", "PAYEMS!", "PAYEMS/../../other", "X" * 121):
+            with self.subTest(series_id=series_id):
+                error = io.StringIO()
+
+                with redirect_stderr(error):
+                    with self.assertRaises(SystemExit) as raised:
+                        main(
+                            [
+                                "sync",
+                                "--series",
+                                series_id,
+                                "--start",
+                                "2008-08-01",
+                                "--end",
+                                "2008-08-01",
+                            ]
+                        )
+
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("series_id must be", error.getvalue())
+
     @patch("asof.sync.get_revision_histories_chunked")
     @patch("asof.cli.load_dotenv")
     def test_refresh_stores_a_rolling_window(self, mock_load_dotenv, mock_get_histories):
@@ -157,6 +180,17 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("--lookback-months reaches before year 1", error.getvalue())
+
+    @patch("asof.cli.load_dotenv")
+    def test_refresh_rejects_an_invalid_series_id(self, mock_load_dotenv):
+        error = io.StringIO()
+
+        with redirect_stderr(error):
+            with self.assertRaises(SystemExit) as raised:
+                main(["refresh", "--series", "PAY EMS"])
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("series_id must be", error.getvalue())
 
     @patch("asof.cli.load_dotenv")
     def test_init_db_does_not_require_a_fred_key(self, mock_load_dotenv):

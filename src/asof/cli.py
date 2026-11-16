@@ -12,6 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from .fred import FredApiError
+from .models import validate_series_id
 from .postgres import PostgresConnectionError, PostgresRevisionStore
 from .storage import RevisionStore, SQLiteRevisionStore
 from .sync import sync_revision_histories
@@ -37,6 +38,13 @@ def _positive_integer(value: str) -> int:
     return parsed
 
 
+def _series_id(value: str) -> str:
+    try:
+        return validate_series_id(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
+
+
 def _add_storage_argument(command: argparse.ArgumentParser) -> None:
     command.add_argument(
         "--sqlite",
@@ -52,7 +60,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     sync = commands.add_parser("sync", help="fetch and store a revision range")
-    sync.add_argument("--series", required=True, help="FRED series ID, such as PAYEMS")
+    sync.add_argument(
+        "--series",
+        required=True,
+        type=_series_id,
+        help="FRED series ID, such as PAYEMS",
+    )
     sync.add_argument("--start", required=True, type=_iso_date, help="first observation date")
     sync.add_argument("--end", required=True, type=_iso_date, help="last observation date")
     _add_storage_argument(sync)
@@ -61,7 +74,12 @@ def _parser() -> argparse.ArgumentParser:
         "refresh",
         help="fetch and store a rolling window ending today",
     )
-    refresh.add_argument("--series", required=True, help="FRED series ID, such as PAYEMS")
+    refresh.add_argument(
+        "--series",
+        required=True,
+        type=_series_id,
+        help="FRED series ID, such as PAYEMS",
+    )
     refresh.add_argument(
         "--lookback-months",
         type=_positive_integer,
