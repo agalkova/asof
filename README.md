@@ -23,14 +23,17 @@ The result was verified against ALFRED on October 22, 2026. The executed experim
 - Serves point-in-time values with a direct storage lookup instead of loading a full history.
 - Syncs date ranges without silently truncating large ALFRED responses.
 - Stores histories in SQLite or PostgreSQL.
+- Includes a DynamoDB storage adapter for the planned AWS deployment.
 - Serves stored data through a read-only FastAPI API.
 - Refreshes a rolling window from the command line.
 
-The core package is deliberately independent of any one deployment platform. SQLite keeps local work simple, PostgreSQL provides a conventional server database, and the planned AWS adapter will add DynamoDB without replacing either one.
+The core package is deliberately independent of any one deployment platform. SQLite keeps local work simple, PostgreSQL provides a conventional server database, and the DynamoDB adapter implements the same storage interface for the planned AWS deployment without replacing either one.
 
 ## Project status
 
 The local data engine, storage adapters, API, command-line tools, tests, and container are complete through v0.10.0. This release hardens point-in-time reads, validates public series identifiers, uses one package version across runtime and build metadata, and exercises PostgreSQL against a real service in CI.
+
+The DynamoDB storage adapter (`asof.DynamoDBRevisionStore`) is implemented and tested against a local in-process DynamoDB emulation. It has not been run against AWS, the command line and API server do not use it yet, and it is not ready to deploy: every replaced history leaves its previous generation in the table, and the worker that deletes retired generations does not exist yet. Scheduled ingestion must stay disabled until it does.
 
 AWS remains the planned portfolio deployment, not a running environment. The proposed design uses API Gateway, Lambda, DynamoDB, EventBridge Scheduler, CloudWatch, CDK, and GitHub Actions with OIDC. See [`docs/aws-architecture.md`](docs/aws-architecture.md) for the decisions, data model, publication protocol, security boundaries, and deployment plan.
 
@@ -61,6 +64,9 @@ pip install -e ".[postgres]"
 
 # FastAPI server
 pip install -e ".[api]"
+
+# DynamoDB storage
+pip install -e ".[dynamodb]"
 ```
 
 Set `ASOF_DATABASE_URL` for PostgreSQL or `ASOF_DATABASE_PATH` to choose a local SQLite file. The generic `DATABASE_URL` variable is intentionally ignored.
@@ -147,7 +153,7 @@ with SQLiteRevisionStore("data/asof.sqlite3") as store:
 python -m unittest discover -s tests -v
 ```
 
-Unit tests use mocked FRED responses and require neither a network connection nor an API key. Local PostgreSQL integration tests run when `ASOF_TEST_DATABASE_URL` points to a disposable test database.
+Unit tests use mocked FRED responses and require neither a network connection nor an API key. Local PostgreSQL integration tests run when `ASOF_TEST_DATABASE_URL` points to a disposable test database. DynamoDB tests run against an in-process emulation and need no AWS account or credentials; install `.[dynamodb,dev]` to run them, otherwise they are skipped.
 
 GitHub Actions starts PostgreSQL and runs the full suite, including the integration tests, on Python 3.11 and 3.13 for every push and pull request.
 

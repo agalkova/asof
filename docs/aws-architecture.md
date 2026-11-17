@@ -1,6 +1,6 @@
 # AWS architecture
 
-This document describes a planned target architecture for v1.0. None of these AWS resources are deployed today. Deployment begins only after the storage adapter, infrastructure code, IAM policies, and cost controls have been implemented and reviewed.
+This document describes a planned target architecture for v1.0. None of these AWS resources are deployed today. The DynamoDB storage adapter described below exists in `src/asof/dynamodb.py` and is tested against a local emulation only. Deployment begins only after the storage adapter, infrastructure code, IAM policies, and cost controls have been implemented and reviewed.
 
 ## Goals
 
@@ -48,18 +48,20 @@ The read function receives read-only access to the DynamoDB table. It does not r
 
 EventBridge Scheduler invokes a separate sync Lambda once per day. The job refreshes a recent observation window and writes the resulting vintages to DynamoDB. The operation must remain idempotent because scheduled delivery and Lambda invocation are at least once.
 
+The schedule must not be enabled until the cleanup worker described under [Retiring old generations](#retiring-old-generations) exists. Each replaced history leaves its previous generation in the table, so a recurring sync without cleanup grows storage without bound.
+
 The scheduler uses a retry policy and an SQS dead-letter queue. The sync function can read the FRED key from an SSM SecureString parameter and can write only to the AsOf table. It has no API Gateway permissions.
 
 ### DynamoDB data model
 
-One planned table stores series metadata, an active-generation manifest for each observation, and immutable vintage generations.
+One planned table stores an active-generation manifest for each observation, immutable vintage generations, and cleanup records. A series metadata item is reserved in the layout but is not written yet, because nothing fetches series metadata today.
 
 | Item | Partition key | Sort key | Important attributes |
 | --- | --- | --- | --- |
-| Series metadata | `SERIES#PAYEMS` | `META` | title, units, frequency |
-| Observation manifest | `SERIES#PAYEMS` | `OBS#2008-08-01` | `active_generation`, vintage count, updated time |
+| Series metadata (reserved) | `SERIES#PAYEMS` | `META` | title, units, frequency |
+| Observation manifest | `SERIES#PAYEMS` | `OBS#2008-08-01` | `active_generation`, `vintage_count`, `updated_at` |
 | Vintage value | `SERIES#PAYEMS#OBS#2008-08-01#GEN#<id>` | `VINTAGE#2008-09-05` | value |
-| Cleanup record | `SERIES#PAYEMS` | `RETIRE#2008-08-01#<id>` | generation key, `delete_after` |
+| Cleanup record | `SERIES#PAYEMS` | `RETIRE#2008-08-01#<id>` | `generation_key`, `lifecycle`, `delete_after` |
 
 The manifest is a per-observation pointer, not a copy of the revision history. Vintage items are never changed after their generation is written. This layout supports the current access patterns without a table scan:
 
@@ -69,17 +71,25 @@ The manifest is a per-observation pointer, not a copy of the revision history. V
 
 The manifest `GetItem` uses `ConsistentRead=true`. [DynamoDB defaults to eventually consistent reads](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html), which could briefly return the previous pointer after a completed sync; a strongly consistent read ensures the request pins the latest successfully published generation. The manifest is stored in the base table because global secondary indexes do not support strongly consistent reads.
 
+Queries against the active generation are strongly consistent as well. Staging finishes immediately before the pointer moves, so an eventually consistent query could otherwise return part of a generation that was just published. A full-history read also compares the number of vintages it found with the manifest's `vintage_count` and fails rather than return a short history.
+
+`delete_after` is an ISO 8601 UTC string, not an epoch number. DynamoDB TTL must not be enabled on it: TTL would delete the cleanup record by itself and leave its generation untracked.
+
 The PostgreSQL and SQLite stores remain supported and keep their existing whole-batch transactions. The planned DynamoDB adapter will implement the same `RevisionStore` interface, whose portable guarantee is narrower: one observation history becomes visible atomically, while a multi-observation sync may become visible observation by observation.
 
 ### Publishing a generation
 
 Each observation is published independently:
 
-1. Read its manifest with a strongly consistent read and remember the current generation, `G0`.
-2. Write the `RETIRE` record for the new generation, `G1`, before writing any vintage items. Its initial `delete_after` is 30 minutes after staging begins, so a crash during staging still leaves a durable cleanup record.
+1. Read its manifest with a strongly consistent read and remember the current generation, `G0`. If `vintage_count` matches, query `G0` and compare its stored items with the history being saved. If they are identical, stop: nothing is written. The comparison reads the items themselves, so saving a history again replaces a generation that has lost or changed items.
+2. Write the `RETIRE` record for the new generation, `G1`, before writing any vintage items. Its `lifecycle` is `staged` and its initial `delete_after` is 30 minutes after staging begins, so a crash during staging still leaves a durable cleanup record.
 3. Write the complete replacement history under the immutable `G1` partition. Retried writes use the same generation identifier and values, so this staging step is idempotent.
-4. Publish `G1` with a transaction containing the [conditional manifest update](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.ConditionExpressions.html) and, when `G0` exists, an update to `G0`'s `RETIRE` record. The manifest condition requires `active_generation = G0`; the first publication instead requires that `active_generation` does not exist. The `G0` cleanup deadline becomes 30 minutes after this publication.
-5. If the condition fails, another sync has already changed the pointer. The losing sync must not overwrite it: it re-reads the manifest before deciding whether another refresh is needed, and the prewritten `G1` record makes its unused generation eligible for later cleanup.
+4. Publish `G1` with one transaction containing:
+   - the [conditional manifest write](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.ConditionExpressions.html), which requires `active_generation = G0`, or that `active_generation` does not exist for a first publication;
+   - an update that moves `G1`'s `RETIRE` record from `staged` to `active`, and fails if the record is in any other state;
+   - when `G0` exists, an update that moves `G0`'s `RETIRE` record to `retired` with a `delete_after` 30 minutes after this publication.
+5. If the condition fails, another sync has already changed the pointer. The losing sync must not overwrite it. It re-reads the manifest: if the active generation already holds the same content, the save succeeds; otherwise it raises a concurrency error and the caller decides whether another refresh is needed. The prewritten `G1` record makes the unused generation eligible for later cleanup.
+6. If the transaction is cancelled and the pointer has not moved, the writer reads `G1`'s `RETIRE` record. If it is no longer `staged`, cleanup has claimed the generation: the save fails without publishing and a later save stages a new generation. Otherwise the cancellation was transient and the transaction is retried a bounded number of times.
 
 The conditional manifest update is the commit point. Readers see either the complete old generation or the complete new generation, and two overlapping syncs that started from the same pointer cannot overwrite one another.
 
@@ -87,9 +97,38 @@ The conditional manifest update is the commit point. Readers see either the comp
 
 Every generation receives a cleanup record before staging starts. This ordering means a sync that crashes after writing some or all of `G1`, but before updating the manifest, cannot leave an untracked orphan.
 
-The pre-staging record is due 30 minutes after staging begins. If the generation becomes active, cleanup keeps the record but skips deletion. When a later sync replaces that generation, the same transaction as the conditional manifest update moves its `delete_after` time to **30 minutes after** the new publication.
+The record's `lifecycle` attribute is the only thing that decides whether a generation may be published or deleted:
 
-Cleanup performs a strongly consistent manifest read immediately before deleting a due generation and never removes the active generation. Deleting vintages and their cleanup record is idempotent, so an interrupted cleanup can be retried.
+| State | Entered by | May be published | May be claimed for deletion |
+| --- | --- | --- | --- |
+| `staged` | Writer, before staging | Yes | After `delete_after` |
+| `active` | Publication transaction | Already is | No |
+| `retired` | Publication of its successor | No | After `delete_after` |
+| `deleting` | Cleanup claim | No | Already is |
+
+```mermaid
+stateDiagram-v2
+    [*] --> staged: cleanup record written
+    staged --> active: publication
+    active --> retired: successor published
+    staged --> deleting: claim after delete_after
+    retired --> deleting: claim after delete_after
+    deleting --> [*]: items and record deleted
+```
+
+A staged record is due 30 minutes after staging begins. Publication removes `delete_after`; replacement sets it to **30 minutes after** the new publication.
+
+Before deleting anything, cleanup must claim the generation with one transaction containing:
+
+- an update that sets its `RETIRE` record to `deleting`, conditional on the record being `staged` or `retired` and `delete_after` having passed;
+- a condition check that the manifest's `active_generation` is absent or names a different generation.
+
+A claim and a publication of the same generation both write that generation's `RETIRE` record inside a transaction, and each requires a state the other one changes. DynamoDB transactions are serializable, so at most one of them commits: a claimed generation can never become active, and an active generation can never be claimed. A manifest read followed by a separate delete would not give this guarantee and must not be used.
+
+`DynamoDBRevisionStore.claim_generation_for_cleanup` implements the claim. The worker that finds due records and deletes claimed generations is not implemented. It must:
+
+- delete only generations in the `deleting` state, and may resume any it finds there, because deletion is idempotent;
+- delete the vintage items first and remove the `RETIRE` record only on a later pass that finds the partition empty, since a writer whose staged generation was claimed may still be writing items until its publication fails.
 
 The grace period is deliberately longer than [Lambda's 15-minute maximum runtime](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html) for the planned on-demand functions. A read Lambda that obtained `G0` immediately before the pointer moved to `G1` therefore has enough time to finish querying `G0`; the extra 15 minutes provides a conservative buffer for scheduling and cleanup clock differences. Cleanup may run later than `delete_after`, but never earlier.
 
@@ -107,6 +146,12 @@ The first deployment remains manual. Automatic production deployment can be enab
 
 - Separate IAM roles for the API, sync job, and deployment workflow.
 - Exact table, queue, parameter, and log resource permissions; no wildcard administrative policies.
+- DynamoDB actions per role, matching what the adapter calls:
+  - read API: `dynamodb:GetItem`, `dynamodb:Query`;
+  - sync: those two plus `dynamodb:PutItem`, `dynamodb:UpdateItem`, `dynamodb:BatchWriteItem`;
+  - cleanup (planned): `dynamodb:UpdateItem` and `dynamodb:ConditionCheckItem` for the claim, plus the actions its own listing and deletion calls turn out to need.
+
+  The adapter publishes with the `TransactWriteItems` API, but [IAM has no action of that name](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis-iam.html): each `Put`, `Update`, and `ConditionCheck` inside a transaction is authorized as `PutItem`, `UpdateItem`, and `ConditionCheckItem`.
 - FRED key stored as an encrypted parameter and available only to the sync function.
 - Public API accepts reads only and validates dates and series identifiers at the handler boundary.
 - DynamoDB encryption at rest and HTTPS in transit use AWS-managed defaults initially.
@@ -129,11 +174,12 @@ The first deployment remains manual. Automatic production deployment can be enab
 
 ## Delivery sequence
 
-1. Add the DynamoDB storage adapter and contract tests.
-2. Add thin Lambda handlers around the existing API and sync logic.
-3. Define the CDK stack and infrastructure tests.
-4. Add GitHub OIDC deployment with a protected environment.
-5. Review the synthesized CloudFormation template and estimated resources.
-6. Deploy manually, run smoke tests, and enable the daily schedule.
+1. Add the DynamoDB storage adapter and contract tests. *(Done; not yet verified against AWS.)*
+2. Add the cleanup worker for retired generations. Scheduled sync depends on it.
+3. Add thin Lambda handlers around the existing API and sync logic.
+4. Define the CDK stack and infrastructure tests.
+5. Add GitHub OIDC deployment with a protected environment.
+6. Review the synthesized CloudFormation template and estimated resources.
+7. Deploy manually, run smoke tests, and enable the daily schedule only once cleanup is running.
 
 Until those steps are complete, this document is a design proposal rather than a description of running infrastructure.

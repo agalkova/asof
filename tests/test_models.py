@@ -1,6 +1,7 @@
 import unittest
 
 from asof import AsOfLookup, RevisionHistory, VintageValue
+from asof.models import validate_iso_date
 
 
 class ModelTests(unittest.TestCase):
@@ -33,6 +34,13 @@ class ModelTests(unittest.TestCase):
     def test_models_require_iso_dates(self):
         with self.assertRaisesRegex(ValueError, "YYYY-MM-DD"):
             VintageValue("2008-9-5", 137473.0)
+
+    def test_public_date_validator_returns_strict_iso_dates(self):
+        self.assertEqual(validate_iso_date("2008-09-05", "as_of_date"), "2008-09-05")
+        for value in ("2008-9-5", "20080905", "2008-02-30", "", None, 20080905):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "as_of_date must use YYYY-MM-DD"):
+                    validate_iso_date(value, "as_of_date")
 
     def test_vintage_values_must_be_finite(self):
         with self.assertRaisesRegex(ValueError, "finite"):

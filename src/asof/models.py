@@ -31,6 +31,15 @@ def _validate_iso_date(value: str, field_name: str) -> None:
         raise ValueError(f"{field_name} must use YYYY-MM-DD format: {value!r}")
 
 
+def validate_iso_date(value: str, field_name: str = "date") -> str:
+    """Return a strict ``YYYY-MM-DD`` date string or raise ``ValueError``."""
+
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must use YYYY-MM-DD format: {value!r}")
+    _validate_iso_date(value, field_name)
+    return value
+
+
 @dataclass(frozen=True)
 class FredObservation:
     """One point-in-time FRED observation in the series' native units."""

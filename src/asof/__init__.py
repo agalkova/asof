@@ -2,6 +2,16 @@
 
 from ._version import __version__
 
+from .dynamodb import (
+    DynamoDBConcurrencyError,
+    DynamoDBConfigurationError,
+    DynamoDBDataError,
+    DynamoDBRequestError,
+    DynamoDBRetryExhaustedError,
+    DynamoDBRevisionStore,
+    DynamoDBStoreError,
+    DynamoDBValueError,
+)
 from .fred import (
     FredApiError,
     VintageLimitError,
@@ -25,6 +35,14 @@ from .sync import SyncResult, sync_revision_histories
 __all__ = [
     "__version__",
     "AsOfLookup",
+    "DynamoDBConcurrencyError",
+    "DynamoDBConfigurationError",
+    "DynamoDBDataError",
+    "DynamoDBRequestError",
+    "DynamoDBRetryExhaustedError",
+    "DynamoDBRevisionStore",
+    "DynamoDBStoreError",
+    "DynamoDBValueError",
     "FredApiError",
     "FredObservation",
     "VintageLimitError",
