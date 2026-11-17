@@ -22,6 +22,7 @@ The result was verified against ALFRED on October 22, 2026. The executed experim
 - Retrieves the complete revision history for an observation.
 - Serves point-in-time values with a direct storage lookup instead of loading a full history.
 - Syncs date ranges without silently truncating large ALFRED responses.
+- Refuses a refresh that would remove or change a vintage already stored.
 - Stores histories in SQLite or PostgreSQL.
 - Includes a DynamoDB storage adapter for the planned AWS deployment.
 - Serves stored data through a read-only FastAPI API.
