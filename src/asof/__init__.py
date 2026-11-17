@@ -10,8 +10,10 @@ from .dynamodb import (
     DynamoDBRetryExhaustedError,
     DynamoDBRevisionStore,
     DynamoDBStoreError,
+    DynamoDBSweepError,
     DynamoDBValueError,
 )
+from .dynamodb_cleanup import CleanupFailure, CleanupSummary, clean_up_generations
 from .fred import (
     FredApiError,
     VintageLimitError,
@@ -35,6 +37,8 @@ from .sync import SyncResult, sync_revision_histories
 __all__ = [
     "__version__",
     "AsOfLookup",
+    "CleanupFailure",
+    "CleanupSummary",
     "DynamoDBConcurrencyError",
     "DynamoDBConfigurationError",
     "DynamoDBDataError",
@@ -42,6 +46,7 @@ __all__ = [
     "DynamoDBRetryExhaustedError",
     "DynamoDBRevisionStore",
     "DynamoDBStoreError",
+    "DynamoDBSweepError",
     "DynamoDBValueError",
     "FredApiError",
     "FredObservation",
@@ -53,6 +58,7 @@ __all__ = [
     "SQLiteRevisionStore",
     "SyncResult",
     "VintageValue",
+    "clean_up_generations",
     "compare_vintages",
     "get_observation",
     "get_revision_histories",

@@ -1119,6 +1119,8 @@ class ConfigurationTests(DynamoDBTestCase):
             {"max_attempts": 2.5},
             {"backoff_base_seconds": -1},
             {"backoff_base_seconds": 2, "backoff_cap_seconds": 1},
+            {"in_flight_write_allowance": timedelta(0)},
+            {"in_flight_write_allowance": "four minutes"},
         ):
             with self.subTest(options=options):
                 with self.assertRaises(DynamoDBConfigurationError):
