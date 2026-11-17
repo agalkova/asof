@@ -33,8 +33,12 @@ Publication requires ``staged``; a cleanup claim requires ``staged`` or
 at the generation. Both are transactions that write the same cleanup record,
 so at most one of them can succeed for a generation.
 
-The store never creates, alters, deletes, or scans the table, and it does not
-delete generations. Deleting claimed generations is left to a cleanup worker.
+A claim also records ``claimed_at``. ``sweep_generation`` deletes the items of
+a ``deleting`` generation and ``finalize_generation_cleanup`` removes its
+cleanup record; ``asof.dynamodb_cleanup`` decides when to call them.
+
+The store never creates, alters, or scans the table. Saving and reading never
+delete anything, and only a generation in the ``deleting`` state is deleted.
 """
 
 from __future__ import annotations
@@ -42,7 +46,7 @@ from __future__ import annotations
 import random
 import re
 import time
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -75,13 +79,19 @@ _ACTIVE = {"S": "active"}
 _RETIRED = {"S": "retired"}
 _DELETING = {"S": "deleting"}
 
+_LIFECYCLES = frozenset({"staged", "active", "retired", "deleting"})
+_TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
 _OBSERVATION_PREFIX = "OBS#"
 _VINTAGE_PREFIX = "VINTAGE#"
+_CLEANUP_PREFIX = "RETIRE#"
 _READINESS_KEY = {"pk": {"S": "ASOF#READINESS"}, "sk": {"S": "PROBE"}}
 
 # DynamoDB numbers hold 38 significant digits between 1E-130 and 9.99...E+125.
 _MAX_MAGNITUDE = Decimal("9.9999999999999999999999999999999999999E+125")
 _MIN_MAGNITUDE = Decimal("1E-130")
+_SDK_RETRY_BACKOFF_CAP_SECONDS = 20
+_SDK_RETRY_AFTER_ALLOWANCE_SECONDS = 5
 
 
 class DynamoDBStoreError(RuntimeError):
@@ -106,7 +116,15 @@ class DynamoDBRequestError(DynamoDBStoreError):
 
 
 class DynamoDBRetryExhaustedError(DynamoDBStoreError):
-    """Raised when DynamoDB keeps deferring work after every allowed attempt."""
+    """Raised when DynamoDB keeps deferring work after every allowed attempt.
+
+    ``unprocessed`` is the number of batched requests DynamoDB had still not
+    accepted when a batch write gave up.
+    """
+
+    def __init__(self, message: str, *, unprocessed: int = 0) -> None:
+        super().__init__(message)
+        self.unprocessed = unprocessed
 
 
 class DynamoDBConcurrencyError(DynamoDBStoreError):
@@ -115,6 +133,18 @@ class DynamoDBConcurrencyError(DynamoDBStoreError):
 
 class DynamoDBDataError(DynamoDBStoreError):
     """Raised when stored items do not have the expected shape."""
+
+
+class DynamoDBSweepError(DynamoDBStoreError):
+    """Raised when a sweep stops on a failure after it may have deleted items.
+
+    ``acknowledged`` counts the delete requests DynamoDB accepted before the
+    failure. The generation is still claimed and can be swept again.
+    """
+
+    def __init__(self, message: str, *, acknowledged: int) -> None:
+        super().__init__(message)
+        self.acknowledged = acknowledged
 
 
 class DynamoDBValueError(DynamoDBStoreError, ValueError):
@@ -134,12 +164,55 @@ class _Replacement:
     vintages: tuple[tuple[str, str], ...]
 
 
+@dataclass(frozen=True)
+class CleanupRecord:
+    """The cleanup record of one generation.
+
+    ``delete_after`` is set while the record is ``staged`` or ``retired``, and
+    ``claimed_at`` once it is ``deleting``.
+    """
+
+    series_id: str
+    observation_date: str
+    generation: str
+    lifecycle: str
+    delete_after: datetime | None
+    claimed_at: datetime | None
+
+    @property
+    def sort_key(self) -> str:
+        return f"{_CLEANUP_PREFIX}{self.observation_date}#{self.generation}"
+
+
+@dataclass(frozen=True)
+class SweepResult:
+    """What one sweep of a claimed generation did.
+
+    ``acknowledged`` counts delete requests that DynamoDB accepted: sent in a
+    batch and not returned as unprocessed. ``complete`` is true when the sweep
+    read the generation's partition to the end, so that every item it saw has
+    an acknowledged delete. It is false when the sweep stopped at ``max_items``
+    with at least one item left.
+    """
+
+    acknowledged: int
+    complete: bool
+
+
+@dataclass(frozen=True)
+class MalformedCleanupRecord:
+    """A cleanup record that cannot be interpreted and must be left alone."""
+
+    series_id: str
+    sort_key: str | None
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
 def _timestamp(moment: datetime) -> str:
-    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return moment.astimezone(timezone.utc).strftime(_TIMESTAMP_FORMAT)
 
 
 def _to_number(value: float) -> str:
@@ -209,6 +282,47 @@ def _parse_vintage(item: Mapping[str, Any]) -> VintageValue:
         raise DynamoDBDataError("Stored vintage item has an invalid date or value") from None
 
 
+def _parse_timestamp(item: Mapping[str, Any], name: str) -> datetime:
+    try:
+        parsed = datetime.strptime(_string(item, name), _TIMESTAMP_FORMAT)
+    except ValueError:
+        raise DynamoDBDataError(f"Stored DynamoDB item has no valid {name!r} time") from None
+    return parsed.replace(tzinfo=timezone.utc)
+
+
+def _parse_cleanup_record(series_id: str, item: Mapping[str, Any]) -> CleanupRecord:
+    parts = _string(item, "sk").split("#")
+    if len(parts) != 3 or f"{parts[0]}#" != _CLEANUP_PREFIX:
+        raise DynamoDBDataError("Stored cleanup record has an unexpected sort key")
+    _, observation_date, generation = parts
+    try:
+        validate_iso_date(observation_date, "observation_date")
+    except ValueError:
+        raise DynamoDBDataError("Stored cleanup record has an invalid date") from None
+    if not _GENERATION_ID.fullmatch(generation):
+        raise DynamoDBDataError("Stored cleanup record has an invalid generation")
+    # The record must name the partition its own key implies. Anything else
+    # leaves it unclear which items the record tracks.
+    expected_partition = _generation_key(series_id, observation_date, generation)
+    if _string(item, "generation_key") != expected_partition:
+        raise DynamoDBDataError("Stored cleanup record names another generation")
+    lifecycle = _string(item, "lifecycle")
+    if lifecycle not in _LIFECYCLES:
+        raise DynamoDBDataError("Stored cleanup record has an unknown lifecycle")
+    return CleanupRecord(
+        series_id=series_id,
+        observation_date=observation_date,
+        generation=generation,
+        lifecycle=lifecycle,
+        delete_after=(
+            _parse_timestamp(item, "delete_after")
+            if lifecycle in {"staged", "retired"}
+            else None
+        ),
+        claimed_at=_parse_timestamp(item, "claimed_at") if lifecycle == "deleting" else None,
+    )
+
+
 def _series_key(series_id: str) -> str:
     return f"SERIES#{series_id}"
 
@@ -227,7 +341,7 @@ def _generation_key(series_id: str, observation_date: str, generation: str) -> s
 def _cleanup_key(series_id: str, observation_date: str, generation: str) -> dict[str, Any]:
     return {
         "pk": {"S": _series_key(series_id)},
-        "sk": {"S": f"RETIRE#{observation_date}#{generation}"},
+        "sk": {"S": f"{_CLEANUP_PREFIX}{observation_date}#{generation}"},
     }
 
 
@@ -293,6 +407,39 @@ def _translate(operation: str, error: Exception) -> DynamoDBRequestError | None:
     return None
 
 
+def _estimate_in_flight_write_allowance(client: Any) -> timedelta:
+    """Return a conservative upper bound for one SDK request and its retries."""
+
+    config = getattr(getattr(client, "meta", None), "config", None)
+    retries = getattr(config, "retries", None)
+    connect_timeout = getattr(config, "connect_timeout", None)
+    read_timeout = getattr(config, "read_timeout", None)
+    if not isinstance(retries, Mapping) or not all(
+        isinstance(value, (int, float)) and value > 0
+        for value in (connect_timeout, read_timeout)
+    ):
+        raise DynamoDBConfigurationError(
+            "Could not determine the DynamoDB client's timeout and retry settings; "
+            "pass in_flight_write_allowance explicitly"
+        )
+    attempts = retries.get("total_max_attempts")
+    if attempts is None and isinstance(retries.get("max_attempts"), int):
+        attempts = retries["max_attempts"] + 1
+    if attempts is None and retries.get("mode") in {"legacy", "standard", "adaptive"}:
+        # Botocore may omit its implicit retry count from ``meta.config``.
+        # Six total attempts is a conservative bound for those defaults.
+        attempts = 6
+    if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 1:
+        raise DynamoDBConfigurationError(
+            "Could not determine the DynamoDB client's retry limit; "
+            "pass in_flight_write_allowance explicitly"
+        )
+    seconds = attempts * (connect_timeout + read_timeout)
+    retry_wait = _SDK_RETRY_BACKOFF_CAP_SECONDS + _SDK_RETRY_AFTER_ALLOWANCE_SECONDS
+    seconds += max(0, attempts - 1) * retry_wait
+    return timedelta(seconds=seconds)
+
+
 class DynamoDBRevisionStore:
     """Store revision histories in an existing DynamoDB table.
 
@@ -302,9 +449,16 @@ class DynamoDBRevisionStore:
 
     Readers call ``GetItem`` and ``Query``. Writers also call ``PutItem``,
     ``BatchWriteItem``, and ``TransactWriteItems``. IAM has no separate action
-    for a write transaction: its ``Put`` and ``Update`` entries are authorized
-    as ``dynamodb:PutItem`` and ``dynamodb:UpdateItem``, and the
-    ``ConditionCheck`` in a cleanup claim as ``dynamodb:ConditionCheckItem``.
+    for a write transaction: its ``Put``, ``Update``, and ``Delete`` entries
+    are authorized as ``dynamodb:PutItem``, ``dynamodb:UpdateItem``, and
+    ``dynamodb:DeleteItem``, and a ``ConditionCheck`` as
+    ``dynamodb:ConditionCheckItem``. Cleanup uses ``GetItem``, ``Query``,
+    ``BatchWriteItem``, and transactions with ``Update``, ``Delete``, and
+    ``ConditionCheck`` entries.
+
+    A save fails if staging one history takes longer than
+    ``GENERATION_GRACE_PERIOD``. Cleanup relies on that limit: once a staged
+    generation is due, its writer has stopped sending items.
 
     Each observation is replaced atomically. A batch is not: when
     ``save_histories`` fails part-way, the observations published before the
@@ -323,6 +477,7 @@ class DynamoDBRevisionStore:
         max_attempts: int = 8,
         backoff_base_seconds: float = 0.05,
         backoff_cap_seconds: float = 5.0,
+        in_flight_write_allowance: timedelta | None = None,
     ) -> None:
         if not isinstance(table_name, str) or not _TABLE_NAME.fullmatch(table_name):
             raise DynamoDBConfigurationError(
@@ -333,6 +488,13 @@ class DynamoDBRevisionStore:
         if not 0 <= backoff_base_seconds <= backoff_cap_seconds:
             raise DynamoDBConfigurationError(
                 "backoff_base_seconds must be between zero and backoff_cap_seconds"
+            )
+        if in_flight_write_allowance is not None and (
+            not isinstance(in_flight_write_allowance, timedelta)
+            or in_flight_write_allowance <= timedelta(0)
+        ):
+            raise DynamoDBConfigurationError(
+                "in_flight_write_allowance must be a positive duration"
             )
         if client is not None and (
             region_name is not None or endpoint_url is not None or client_config is not None
@@ -356,6 +518,17 @@ class DynamoDBRevisionStore:
                 client_config=client_config,
             )
         )
+        self._in_flight_write_allowance = (
+            in_flight_write_allowance
+            if in_flight_write_allowance is not None
+            else _estimate_in_flight_write_allowance(self._client)
+        )
+
+    @property
+    def in_flight_write_allowance(self) -> timedelta:
+        """Maximum configured duration of one SDK batch-write call."""
+
+        return self._in_flight_write_allowance
 
     def save_history(self, history: RevisionHistory) -> int:
         """Replace the stored history for one observation and return its vintage count."""
@@ -474,6 +647,8 @@ class DynamoDBRevisionStore:
         observation_date: str,
         generation: str,
         now: datetime | None = None,
+        deadline: datetime | None = None,
+        clock: Callable[[], datetime] = _utc_now,
     ) -> bool:
         """Atomically reserve a due, inactive generation for deletion.
 
@@ -482,18 +657,16 @@ class DynamoDBRevisionStore:
         when the generation is active, not yet due, already claimed, or
         unknown, or when DynamoDB cancelled the transaction for another reason.
 
-        This only claims. It does not find due generations or delete anything.
+        The claim time is stored as ``claimed_at``. This only claims: it does
+        not find due generations or delete anything.
         """
 
-        validate_series_id(series_id)
-        validate_iso_date(observation_date, "observation_date")
-        if not isinstance(generation, str) or not _GENERATION_ID.fullmatch(generation):
-            raise ValueError("generation must be a 32-character lowercase hex identifier")
-        self._ensure_writable()
+        self._check_generation(series_id, observation_date, generation)
+        claimed_at = {"S": _timestamp(now or _utc_now())}
         claim = {
             "TableName": self._table_name,
             "Key": _cleanup_key(series_id, observation_date, generation),
-            "UpdateExpression": "SET #lifecycle = :deleting",
+            "UpdateExpression": "SET #lifecycle = :deleting, claimed_at = :now",
             "ConditionExpression": (
                 "#lifecycle IN (:staged, :retired) AND delete_after <= :now"
             ),
@@ -502,27 +675,213 @@ class DynamoDBRevisionStore:
                 ":deleting": _DELETING,
                 ":staged": _STAGED,
                 ":retired": _RETIRED,
-                ":now": {"S": _timestamp(now or _utc_now())},
+                ":now": claimed_at,
             },
         }
-        not_active = {
-            "TableName": self._table_name,
-            "Key": _manifest_key(series_id, observation_date),
-            "ConditionExpression": (
-                "attribute_not_exists(active_generation) OR active_generation <> :generation"
-            ),
-            "ExpressionAttributeValues": {":generation": {"S": generation}},
-        }
-        try:
-            self._call(
-                "transact_write_items",
-                TransactItems=[{"Update": claim}, {"ConditionCheck": not_active}],
+
+        def after_cancellation(record: Mapping[str, Any]) -> bool | None:
+            lifecycle = record.get("lifecycle")
+            if lifecycle == _DELETING:
+                # True when this very claim was applied but its response was lost.
+                return record.get("claimed_at") == claimed_at
+            delete_after = (record.get("delete_after") or {}).get("S")
+            still_due = isinstance(delete_after, str) and delete_after <= claimed_at["S"]
+            return None if lifecycle in (_STAGED, _RETIRED) and still_due else False
+
+        return self._transact_unless_active(
+            {"Update": claim},
+            after_cancellation,
+            series_id,
+            observation_date,
+            generation,
+            deadline=deadline,
+            clock=clock,
+        )
+
+    def iter_cleanup_records(
+        self,
+        *,
+        series_id: str,
+        deadline: datetime | None = None,
+        clock: Callable[[], datetime] = _utc_now,
+    ) -> Iterator[CleanupRecord | MalformedCleanupRecord]:
+        """Yield every cleanup record of a series, following pagination.
+
+        A record that cannot be interpreted is yielded as
+        ``MalformedCleanupRecord`` so the caller can report it and go on.
+        """
+
+        validate_series_id(series_id)
+        for item in self._query(
+            KeyConditionExpression="pk = :pk AND begins_with(sk, :prefix)",
+            ExpressionAttributeValues={
+                ":pk": {"S": _series_key(series_id)},
+                ":prefix": {"S": _CLEANUP_PREFIX},
+            },
+            deadline=deadline,
+            clock=clock,
+        ):
+            try:
+                yield _parse_cleanup_record(series_id, item)
+            except DynamoDBDataError:
+                sort_key = (item.get("sk") or {}).get("S")
+                yield MalformedCleanupRecord(
+                    series_id=series_id,
+                    sort_key=sort_key if isinstance(sort_key, str) else None,
+                )
+
+    def sweep_generation(
+        self,
+        *,
+        series_id: str,
+        observation_date: str,
+        generation: str,
+        max_items: int | None = None,
+        deadline: datetime | None = None,
+        clock: Callable[[], datetime] = _utc_now,
+    ) -> SweepResult:
+        """Delete the items of a generation claimed for cleanup.
+
+        Nothing is deleted unless, immediately beforehand, the cleanup record
+        is ``deleting`` and the manifest does not reference the generation. The
+        cleanup record itself is kept. Sweeping again is safe.
+
+        Items are read one query page at a time and deleted in batches of at
+        most 25. With ``max_items`` the sweep stops once that many deletes
+        have been acknowledged. With ``deadline`` it stops before starting a
+        batch or retry at or after that time. Either limit reports incomplete
+        work. A failure after the first batch raises ``DynamoDBSweepError``
+        with the number of deletes acknowledged so far.
+        """
+
+        self._check_generation(series_id, observation_date, generation)
+        if max_items is not None and (
+            isinstance(max_items, bool) or not isinstance(max_items, int) or max_items < 0
+        ):
+            raise ValueError("max_items must be a non-negative integer")
+        if deadline is not None and clock() >= deadline:
+            return SweepResult(acknowledged=0, complete=False)
+        if self._lifecycle(series_id, observation_date, generation) != _DELETING:
+            raise DynamoDBConcurrencyError(
+                "The generation is not claimed for cleanup; nothing was deleted"
             )
-        except DynamoDBRequestError as error:
-            if error.code != _TRANSACTION_CANCELED:
-                raise
+        if deadline is not None and clock() >= deadline:
+            return SweepResult(acknowledged=0, complete=False)
+        manifest = self._read_manifest(series_id, observation_date)
+        if manifest is not None and manifest.generation == generation:
+            raise DynamoDBDataError(
+                "The manifest references a generation claimed for cleanup; nothing was deleted"
+            )
+        if deadline is not None and clock() >= deadline:
+            return SweepResult(acknowledged=0, complete=False)
+
+        acknowledged = 0
+        batch: list[dict[str, Any]] = []
+        try:
+            for item in self._query(
+                KeyConditionExpression="pk = :pk",
+                ExpressionAttributeValues={
+                    ":pk": {"S": _generation_key(series_id, observation_date, generation)},
+                },
+                ProjectionExpression="pk, sk",
+                deadline=deadline,
+                clock=clock,
+            ):
+                if deadline is not None and clock() >= deadline:
+                    return SweepResult(acknowledged=acknowledged, complete=False)
+                if max_items is not None and acknowledged + len(batch) >= max_items:
+                    deleted, _ = self._write_delete_batch(
+                        batch, deadline=deadline, clock=clock
+                    )
+                    acknowledged += deleted
+                    return SweepResult(acknowledged=acknowledged, complete=False)
+                batch.append({"DeleteRequest": {"Key": {"pk": item["pk"], "sk": item["sk"]}}})
+                if len(batch) == _BATCH_WRITE_LIMIT:
+                    deleted, complete = self._write_delete_batch(
+                        batch, deadline=deadline, clock=clock
+                    )
+                    acknowledged += deleted
+                    if not complete:
+                        return SweepResult(acknowledged=acknowledged, complete=False)
+                    batch = []
+            if deadline is not None and clock() >= deadline:
+                return SweepResult(acknowledged=acknowledged, complete=False)
+            deleted, complete = self._write_delete_batch(
+                batch, deadline=deadline, clock=clock
+            )
+            acknowledged += deleted
+            if not complete:
+                return SweepResult(acknowledged=acknowledged, complete=False)
+        except DynamoDBSweepError as error:
+            raise DynamoDBSweepError(
+                str(error), acknowledged=acknowledged + error.acknowledged
+            ) from None
+        except DynamoDBStoreError as error:
+            raise DynamoDBSweepError(str(error), acknowledged=acknowledged) from None
+        return SweepResult(acknowledged=acknowledged, complete=True)
+
+    def finalize_generation_cleanup(
+        self,
+        *,
+        series_id: str,
+        observation_date: str,
+        generation: str,
+        claimed_at: datetime,
+        deadline: datetime | None = None,
+        clock: Callable[[], datetime] = _utc_now,
+    ) -> bool:
+        """Remove the cleanup record of an empty, claimed generation.
+
+        Returns ``False`` and removes nothing when the generation still has
+        items, the record is no longer the claim identified by ``claimed_at``,
+        or the manifest references the generation. Call this only once late
+        writers can no longer add items; ``asof.dynamodb_cleanup`` waits for
+        its stabilization period first.
+        """
+
+        self._check_generation(series_id, observation_date, generation)
+        expected_claim = {"S": _timestamp(claimed_at)}
+        remove = {
+            "TableName": self._table_name,
+            "Key": _cleanup_key(series_id, observation_date, generation),
+            "ConditionExpression": "#lifecycle = :deleting AND claimed_at = :claimed_at",
+            "ExpressionAttributeNames": _LIFECYCLE_NAMES,
+            "ExpressionAttributeValues": {":deleting": _DELETING, ":claimed_at": expected_claim},
+        }
+
+        def still_empty() -> bool:
+            if deadline is not None and clock() >= deadline:
+                return False
+            remaining = self._query(
+                KeyConditionExpression="pk = :pk",
+                ExpressionAttributeValues={
+                    ":pk": {"S": _generation_key(series_id, observation_date, generation)},
+                },
+                ProjectionExpression="pk",
+                Limit=1,
+                deadline=deadline,
+                clock=clock,
+            )
+            return next(iter(remaining), None) is None
+
+        def after_cancellation(record: Mapping[str, Any]) -> bool | None:
+            same_claim = (
+                record.get("lifecycle") == _DELETING
+                and record.get("claimed_at") == expected_claim
+            )
+            return None if same_claim and still_empty() else False
+
+        if not still_empty():
             return False
-        return True
+        return self._transact_unless_active(
+            {"Delete": remove},
+            after_cancellation,
+            series_id,
+            observation_date,
+            generation,
+            deadline=deadline,
+            clock=clock,
+        )
 
     def is_ready(self) -> bool:
         """Return whether the table answers a read with the expected key schema."""
@@ -569,6 +928,75 @@ class DynamoDBRevisionStore:
         if self._read_only:
             raise DynamoDBStoreError("The DynamoDB store was opened read-only")
 
+    def _check_generation(self, series_id: str, observation_date: str, generation: str) -> None:
+        validate_series_id(series_id)
+        validate_iso_date(observation_date, "observation_date")
+        if not isinstance(generation, str) or not _GENERATION_ID.fullmatch(generation):
+            raise ValueError("generation must be a 32-character lowercase hex identifier")
+        self._ensure_writable()
+
+    def _transact_unless_active(
+        self,
+        action: dict[str, Any],
+        after_cancellation: Callable[[Mapping[str, Any]], bool | None],
+        series_id: str,
+        observation_date: str,
+        generation: str,
+        *,
+        deadline: datetime | None = None,
+        clock: Callable[[], datetime] = _utc_now,
+    ) -> bool:
+        """Run one write together with a check that the manifest points elsewhere.
+
+        A cancelled transaction does not say why it was cancelled in a form
+        worth trusting, so the cleanup record and the manifest are read again.
+        ``after_cancellation`` receives the cleanup record (empty when it is
+        gone) and returns the result to report, or ``None`` when the write's
+        own condition still holds. In that case, and if the manifest still
+        points elsewhere, nothing explains the cancellation: it is retried,
+        and reported as a failure when the attempts run out.
+        """
+
+        not_active = {
+            "TableName": self._table_name,
+            "Key": _manifest_key(series_id, observation_date),
+            "ConditionExpression": (
+                "attribute_not_exists(active_generation) OR active_generation <> :generation"
+            ),
+            "ExpressionAttributeValues": {":generation": {"S": generation}},
+        }
+        for attempt in range(self._max_attempts):
+            if deadline is not None and clock() >= deadline:
+                return False
+            try:
+                self._call(
+                    "transact_write_items",
+                    TransactItems=[action, {"ConditionCheck": not_active}],
+                )
+                return True
+            except DynamoDBRequestError as error:
+                if error.code != _TRANSACTION_CANCELED:
+                    raise
+            if deadline is not None and clock() >= deadline:
+                return False
+            record = self._cleanup_record(series_id, observation_date, generation)
+            result = after_cancellation(record)
+            if result is not None:
+                return result
+            if deadline is not None and clock() >= deadline:
+                return False
+            manifest = self._read_manifest(series_id, observation_date)
+            if manifest is not None and manifest.generation == generation:
+                return False
+            if attempt + 1 < self._max_attempts:
+                if deadline is not None and clock() >= deadline:
+                    return False
+                self._backoff(attempt)
+        raise DynamoDBRetryExhaustedError(
+            f"DynamoDB kept cancelling a cleanup transaction after {self._max_attempts} "
+            "attempts although its conditions still held"
+        )
+
     def _call(self, operation: str, **parameters: Any) -> Any:
         self._ensure_open()
         try:
@@ -585,11 +1013,19 @@ class DynamoDBRevisionStore:
         if delay > 0:
             time.sleep(delay)
 
-    def _query(self, **parameters: Any) -> Iterator[Mapping[str, Any]]:
+    def _query(
+        self,
+        *,
+        deadline: datetime | None = None,
+        clock: Callable[[], datetime] = _utc_now,
+        **parameters: Any,
+    ) -> Iterator[Mapping[str, Any]]:
         """Yield every matching item, following pagination to the end."""
 
         request = {"TableName": self._table_name, "ConsistentRead": True, **parameters}
         while True:
+            if deadline is not None and clock() >= deadline:
+                return
             response = self._call("query", **request)
             yield from response.get("Items", ())
             last_key = response.get("LastEvaluatedKey")
@@ -649,14 +1085,22 @@ class DynamoDBRevisionStore:
                 return False
         return next(expected, None) is None
 
-    def _is_staged(self, series_id: str, observation_date: str, generation: str) -> bool:
+    def _cleanup_record(
+        self,
+        series_id: str,
+        observation_date: str,
+        generation: str,
+    ) -> Mapping[str, Any]:
         response = self._call(
             "get_item",
             TableName=self._table_name,
             Key=_cleanup_key(series_id, observation_date, generation),
             ConsistentRead=True,
         )
-        return (response.get("Item") or {}).get("lifecycle") == _STAGED
+        return response.get("Item") or {}
+
+    def _lifecycle(self, series_id: str, observation_date: str, generation: str) -> Any:
+        return self._cleanup_record(series_id, observation_date, generation).get("lifecycle")
 
     def _replace_history(self, replacement: _Replacement) -> None:
         series_id = replacement.series_id
@@ -666,6 +1110,7 @@ class DynamoDBRevisionStore:
             return
 
         generation = uuid4().hex
+        deadline = _utc_now() + GENERATION_GRACE_PERIOD
         # The cleanup record goes first so a crash while staging cannot leave
         # vintage items that nothing tracks.
         self._call(
@@ -677,10 +1122,10 @@ class DynamoDBRevisionStore:
                     "S": _generation_key(series_id, observation_date, generation)
                 },
                 "lifecycle": _STAGED,
-                "delete_after": {"S": _timestamp(_utc_now() + GENERATION_GRACE_PERIOD)},
+                "delete_after": {"S": _timestamp(deadline)},
             },
         )
-        self._stage(replacement, generation)
+        self._stage(replacement, generation, deadline)
 
         for attempt in range(self._max_attempts):
             try:
@@ -699,7 +1144,7 @@ class DynamoDBRevisionStore:
                     f"Another writer published {series_id} {observation_date} first; "
                     "the stored history was left unchanged"
                 )
-            if not self._is_staged(series_id, observation_date, generation):
+            if self._lifecycle(series_id, observation_date, generation) != _STAGED:
                 raise DynamoDBStoreError(
                     "The staged generation was claimed for cleanup; nothing was published"
                 )
@@ -710,7 +1155,7 @@ class DynamoDBRevisionStore:
             f"DynamoDB kept cancelling publication after {self._max_attempts} attempts"
         )
 
-    def _stage(self, replacement: _Replacement, generation: str) -> None:
+    def _stage(self, replacement: _Replacement, generation: str, deadline: datetime) -> None:
         partition = _generation_key(
             replacement.series_id,
             replacement.observation_date,
@@ -729,31 +1174,97 @@ class DynamoDBRevisionStore:
             for vintage_date, number in replacement.vintages
         ]
         for start in range(0, len(requests), _BATCH_WRITE_LIMIT):
-            pending = requests[start : start + _BATCH_WRITE_LIMIT]
-            for attempt in range(self._max_attempts):
+            self._write_batch(requests[start : start + _BATCH_WRITE_LIMIT], deadline=deadline)
+
+    def _write_batch(
+        self,
+        requests: list[dict[str, Any]],
+        *,
+        deadline: datetime | None = None,
+    ) -> None:
+        """Send up to 25 put or delete requests, resending unprocessed ones.
+
+        With a ``deadline``, nothing is sent once it has passed. Cleanup may
+        claim a staged generation from then on, and it must be able to assume
+        that the writer has stopped adding items.
+        """
+
+        pending = requests
+        for attempt in range(self._max_attempts):
+            if not pending:
+                return
+            if deadline is not None and _utc_now() >= deadline:
+                raise DynamoDBStoreError(
+                    "Staging outlived the cleanup grace period; nothing was published"
+                )
+            response = self._call(
+                "batch_write_item",
+                RequestItems={self._table_name: pending},
+            )
+            unprocessed = response.get("UnprocessedItems") or {}
+            pending = list(unprocessed.get(self._table_name) or ())
+            if any(
+                leftover
+                for table, leftover in unprocessed.items()
+                if table != self._table_name
+            ):
+                # Treating these as done would publish an incomplete
+                # generation or leave items behind after a sweep.
+                raise DynamoDBStoreError(
+                    "DynamoDB reported unprocessed writes under an unexpected table name"
+                )
+            if pending and attempt + 1 < self._max_attempts:
+                self._backoff(attempt)
+        if pending:
+            raise DynamoDBRetryExhaustedError(
+                f"DynamoDB left batched writes unprocessed after {self._max_attempts} attempts",
+                unprocessed=len(pending),
+            )
+
+    def _write_delete_batch(
+        self,
+        requests: list[dict[str, Any]],
+        *,
+        deadline: datetime | None = None,
+        clock: Callable[[], datetime] = _utc_now,
+    ) -> tuple[int, bool]:
+        """Delete one batch and preserve acknowledged progress on every failure."""
+
+        pending = requests
+        acknowledged = 0
+        for attempt in range(self._max_attempts):
+            if not pending:
+                return acknowledged, True
+            if deadline is not None and clock() >= deadline:
+                return acknowledged, False
+            before = len(pending)
+            try:
                 response = self._call(
                     "batch_write_item",
                     RequestItems={self._table_name: pending},
                 )
-                unprocessed = response.get("UnprocessedItems") or {}
-                pending = list(unprocessed.get(self._table_name) or ())
-                if any(
-                    requests
-                    for table, requests in unprocessed.items()
-                    if table != self._table_name
-                ):
-                    # Treating these as stored would publish an incomplete generation.
-                    raise DynamoDBStoreError(
-                        "DynamoDB reported unprocessed writes under an unexpected table name"
-                    )
-                if not pending:
-                    break
-                if attempt + 1 < self._max_attempts:
-                    self._backoff(attempt)
-            else:
-                raise DynamoDBRetryExhaustedError(
-                    f"DynamoDB left staged writes unprocessed after {self._max_attempts} attempts"
+            except DynamoDBStoreError as error:
+                raise DynamoDBSweepError(str(error), acknowledged=acknowledged) from None
+            unprocessed = response.get("UnprocessedItems") or {}
+            pending = list(unprocessed.get(self._table_name) or ())
+            acknowledged += before - len(pending)
+            if any(
+                leftover
+                for table, leftover in unprocessed.items()
+                if table != self._table_name
+            ):
+                raise DynamoDBSweepError(
+                    "DynamoDB reported unprocessed writes under an unexpected table name",
+                    acknowledged=acknowledged,
                 )
+            if pending and attempt + 1 < self._max_attempts:
+                self._backoff(attempt)
+        if pending:
+            raise DynamoDBSweepError(
+                f"DynamoDB left batched writes unprocessed after {self._max_attempts} attempts",
+                acknowledged=acknowledged,
+            )
+        return acknowledged, True
 
     def _publish(
         self,

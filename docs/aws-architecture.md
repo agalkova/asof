@@ -48,7 +48,7 @@ The read function receives read-only access to the DynamoDB table. It does not r
 
 EventBridge Scheduler invokes a separate sync Lambda once per day. The job refreshes a recent observation window and writes the resulting vintages to DynamoDB. The operation must remain idempotent because scheduled delivery and Lambda invocation are at least once.
 
-The schedule must not be enabled until the cleanup worker described under [Retiring old generations](#retiring-old-generations) exists. Each replaced history leaves its previous generation in the table, so a recurring sync without cleanup grows storage without bound.
+The schedule is disabled and must stay disabled until the cleanup described under [Retiring old generations](#retiring-old-generations) runs regularly for every synced series. Each replaced history leaves its previous generation in the table, so a recurring sync without cleanup grows storage without bound. The cleanup code exists and is tested locally; nothing invokes it yet.
 
 The scheduler uses a retry policy and an SQS dead-letter queue. The sync function can read the FRED key from an SSM SecureString parameter and can write only to the AsOf table. It has no API Gateway permissions.
 
@@ -61,7 +61,7 @@ One planned table stores an active-generation manifest for each observation, imm
 | Series metadata (reserved) | `SERIES#PAYEMS` | `META` | title, units, frequency |
 | Observation manifest | `SERIES#PAYEMS` | `OBS#2008-08-01` | `active_generation`, `vintage_count`, `updated_at` |
 | Vintage value | `SERIES#PAYEMS#OBS#2008-08-01#GEN#<id>` | `VINTAGE#2008-09-05` | value |
-| Cleanup record | `SERIES#PAYEMS` | `RETIRE#2008-08-01#<id>` | `generation_key`, `lifecycle`, `delete_after` |
+| Cleanup record | `SERIES#PAYEMS` | `RETIRE#2008-08-01#<id>` | `generation_key`, `lifecycle`, `delete_after`, `claimed_at` |
 
 The manifest is a per-observation pointer, not a copy of the revision history. Vintage items are never changed after their generation is written. This layout supports the current access patterns without a table scan:
 
@@ -83,7 +83,7 @@ Each observation is published independently:
 
 1. Read its manifest with a strongly consistent read and remember the current generation, `G0`. If `vintage_count` matches, query `G0` and compare its stored items with the history being saved. If they are identical, stop: nothing is written. The comparison reads the items themselves, so saving a history again replaces a generation that has lost or changed items.
 2. Write the `RETIRE` record for the new generation, `G1`, before writing any vintage items. Its `lifecycle` is `staged` and its initial `delete_after` is 30 minutes after staging begins, so a crash during staging still leaves a durable cleanup record.
-3. Write the complete replacement history under the immutable `G1` partition. Retried writes use the same generation identifier and values, so this staging step is idempotent.
+3. Write the complete replacement history under the immutable `G1` partition. Retried writes use the same generation identifier and values, so this staging step is idempotent. The writer sends no further batch once `G1`'s `delete_after` time has passed, and the save fails instead.
 4. Publish `G1` with one transaction containing:
    - the [conditional manifest write](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.ConditionExpressions.html), which requires `active_generation = G0`, or that `active_generation` does not exist for a first publication;
    - an update that moves `G1`'s `RETIRE` record from `staged` to `active`, and fails if the record is in any other state;
@@ -120,15 +120,38 @@ A staged record is due 30 minutes after staging begins. Publication removes `del
 
 Before deleting anything, cleanup must claim the generation with one transaction containing:
 
-- an update that sets its `RETIRE` record to `deleting`, conditional on the record being `staged` or `retired` and `delete_after` having passed;
+- an update that sets its `RETIRE` record to `deleting` and stores the claim time as `claimed_at`, conditional on the record being `staged` or `retired` and `delete_after` having passed;
 - a condition check that the manifest's `active_generation` is absent or names a different generation.
 
 A claim and a publication of the same generation both write that generation's `RETIRE` record inside a transaction, and each requires a state the other one changes. DynamoDB transactions are serializable, so at most one of them commits: a claimed generation can never become active, and an active generation can never be claimed. A manifest read followed by a separate delete would not give this guarantee and must not be used.
 
-`DynamoDBRevisionStore.claim_generation_for_cleanup` implements the claim. The worker that finds due records and deletes claimed generations is not implemented. It must:
+### Cleanup passes
 
-- delete only generations in the `deleting` state, and may resume any it finds there, because deletion is idempotent;
-- delete the vintage items first and remove the `RETIRE` record only on a later pass that finds the partition empty, since a writer whose staged generation was claimed may still be writing items until its publication fails.
+`asof.clean_up_generations(store, series_ids)` makes one pass and returns a summary. It works only on the series IDs it is given: it queries each series partition for `RETIRE#` records and never scans the table, so a series that is not named is never cleaned. For each record:
+
+1. `active` records, and `staged` or `retired` records that are not yet due, are skipped.
+2. A due `staged` or `retired` record is claimed. A `deleting` record left by an earlier pass is resumed.
+3. Immediately before deleting, the pass re-reads the `RETIRE` record, which must be `deleting`, and the manifest, which must not reference the generation. It then reads the generation's partition one query page at a time and deletes items in batches of at most 25, resending unprocessed deletes with bounded, jittered backoff. The `RETIRE` record stays.
+4. The `RETIRE` record is removed only when all of these hold:
+   - the stabilization period has passed since `claimed_at`;
+   - this pass read the whole partition with strongly consistent queries and found it empty;
+   - a transaction that deletes the record, conditional on it still being `deleting` with the same `claimed_at`, and checks that the manifest does not reference the generation, commits.
+
+   Otherwise the record is left for a later pass. A pass that finds items deletes them and defers, so one pass never both claims and finalizes a generation.
+
+The stabilization period exists for late writers. A writer whose staged generation was claimed cannot publish, but a batch of its items may still arrive. Because the writer stops sending once `delete_after` passes and a claim requires `delete_after` to have passed, such items can only come from a request already in flight or from a writer whose clock runs behind the cleanup host's.
+
+The store estimates the maximum duration of one in-flight SDK request from the client's effective connect timeout, read timeout and retry count. Cleanup adds a conservative 30-minute clock-skew allowance and refuses a shorter stabilization period. A caller supplying a client whose configuration cannot be inspected must provide its in-flight allowance explicitly. The default stabilization period is 45 minutes with the adapter's bounded client settings. Keeping the cleanup record until then means a later pass sweeps anything that arrived.
+
+Every step can be repeated, so an interrupted pass is simply run again: a `deleting` generation can never be published, deletes are idempotent, and finalization is conditional.
+
+A cancelled claim or finalization transaction is not taken at face value. The pass re-reads the `RETIRE` record and the manifest: if the record or the manifest changed so that the condition no longer holds, the record is deferred; if the transaction turns out to have been applied, that is recognized; and if everything still permits the transaction, it is retried a bounded number of times and then reported as a failure.
+
+A pass has conservative defaults for a runtime with a time limit: at most 25 generations claimed or resumed, 500 acknowledged deletes and eight minutes. The deadline is checked before discovery pages, claims and their retries, generation query pages, delete batches and retries, and finalization requests; an in-flight SDK request may finish after it, but no new request starts after it. A caller may choose other positive limits, or explicitly use `None` for an unbounded local maintenance run. A pass that runs out of budget stops and sets `budget_exhausted`; a generation whose sweep was cut short is never finalized in that pass. Nothing is stored between passes, and the next pass starts again from the first named series, so budgets must be large enough for cleanup to keep up with the generations that syncs retire.
+
+The summary counts acknowledged deletes: delete requests that DynamoDB accepted in a batch and did not return as unprocessed. The count includes partial progress from an earlier response even if a later retry fails, as well as deletes made before a budget runs out. A failure entry carries the count for its own record.
+
+A malformed record, or a `deleting` record whose generation the manifest references, is reported in the summary and left untouched, and the pass continues. A failed request or exhausted retries is reported and stops the pass, because later records would meet the same problem. The summary's `succeeded` flag is false after any failure and after a budget ran out.
 
 The grace period is deliberately longer than [Lambda's 15-minute maximum runtime](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html) for the planned on-demand functions. A read Lambda that obtained `G0` immediately before the pointer moved to `G1` therefore has enough time to finish querying `G0`; the extra 15 minutes provides a conservative buffer for scheduling and cleanup clock differences. Cleanup may run later than `delete_after`, but never earlier.
 
@@ -149,7 +172,7 @@ The first deployment remains manual. Automatic production deployment can be enab
 - DynamoDB actions per role, matching what the adapter calls:
   - read API: `dynamodb:GetItem`, `dynamodb:Query`;
   - sync: those two plus `dynamodb:PutItem`, `dynamodb:UpdateItem`, `dynamodb:BatchWriteItem`;
-  - cleanup (planned): `dynamodb:UpdateItem` and `dynamodb:ConditionCheckItem` for the claim, plus the actions its own listing and deletion calls turn out to need.
+  - cleanup: `dynamodb:Query`, `dynamodb:GetItem`, `dynamodb:BatchWriteItem`, and, for its transactions, `dynamodb:UpdateItem`, `dynamodb:DeleteItem`, `dynamodb:ConditionCheckItem`.
 
   The adapter publishes with the `TransactWriteItems` API, but [IAM has no action of that name](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis-iam.html): each `Put`, `Update`, and `ConditionCheck` inside a transaction is authorized as `PutItem`, `UpdateItem`, and `ConditionCheckItem`.
 - FRED key stored as an encrypted parameter and available only to the sync function.
@@ -175,11 +198,11 @@ The first deployment remains manual. Automatic production deployment can be enab
 ## Delivery sequence
 
 1. Add the DynamoDB storage adapter and contract tests. *(Done; not yet verified against AWS.)*
-2. Add the cleanup worker for retired generations. Scheduled sync depends on it.
+2. Add cleanup of retired and abandoned generations. *(Done; not yet verified against AWS.)*
 3. Add thin Lambda handlers around the existing API and sync logic.
 4. Define the CDK stack and infrastructure tests.
 5. Add GitHub OIDC deployment with a protected environment.
 6. Review the synthesized CloudFormation template and estimated resources.
-7. Deploy manually, run smoke tests, and enable the daily schedule only once cleanup is running.
+7. Deploy manually, run smoke tests, and enable the daily schedule only once cleanup is running on its own schedule for the same series.
 
 Until those steps are complete, this document is a design proposal rather than a description of running infrastructure.

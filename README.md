@@ -33,7 +33,7 @@ The core package is deliberately independent of any one deployment platform. SQL
 
 The local data engine, storage adapters, API, command-line tools, tests, and container are complete through v0.10.0. This release hardens point-in-time reads, validates public series identifiers, uses one package version across runtime and build metadata, and exercises PostgreSQL against a real service in CI.
 
-The DynamoDB storage adapter (`asof.DynamoDBRevisionStore`) is implemented and tested against a local in-process DynamoDB emulation. It has not been run against AWS, the command line and API server do not use it yet, and it is not ready to deploy: every replaced history leaves its previous generation in the table, and the worker that deletes retired generations does not exist yet. Scheduled ingestion must stay disabled until it does.
+The DynamoDB storage adapter (`asof.DynamoDBRevisionStore`) is implemented and tested against a local in-process DynamoDB emulation. It has not been run against AWS, the command line and API server do not use it yet, and it is not ready to deploy. Every replaced history leaves its previous generation in the table; `asof.clean_up_generations` removes those generations for the series IDs it is given, and is likewise tested only against the local emulation. Nothing runs it yet, so scheduled ingestion remains disabled.
 
 AWS remains the planned portfolio deployment, not a running environment. The proposed design uses API Gateway, Lambda, DynamoDB, EventBridge Scheduler, CloudWatch, CDK, and GitHub Actions with OIDC. See [`docs/aws-architecture.md`](docs/aws-architecture.md) for the decisions, data model, publication protocol, security boundaries, and deployment plan.
 
