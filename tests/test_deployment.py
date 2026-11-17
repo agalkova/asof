@@ -38,6 +38,22 @@ class DeploymentConfigTests(unittest.TestCase):
         self.assertIn("ASOF_TEST_DATABASE_URL", workflow)
         self.assertIn("pg_isready", workflow)
 
+    def test_ci_installs_the_local_dynamodb_test_dependencies(self):
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+
+        self.assertIn('pip install -e ".[api,postgres,dynamodb,dev]"', workflow)
+        self.assertNotIn("AWS_ACCESS_KEY_ID", workflow)
+        self.assertNotIn("configure-aws-credentials", workflow)
+
+    def test_aws_packages_are_optional(self):
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+        required = " ".join(project["dependencies"])
+
+        self.assertNotIn("boto", required)
+        self.assertTrue(
+            any(item.startswith("boto3") for item in project["optional-dependencies"]["dynamodb"])
+        )
+
     def test_package_version_has_one_source(self):
         configuration = tomllib.loads((ROOT / "pyproject.toml").read_text())
 
