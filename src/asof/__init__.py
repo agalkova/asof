@@ -32,7 +32,7 @@ from .models import (
 )
 from .postgres import PostgresRevisionStore
 from .storage import RevisionStore, SQLiteRevisionStore
-from .sync import SyncResult, sync_revision_histories
+from .sync import RevisionConflictError, SyncResult, sync_revision_histories
 
 __all__ = [
     "__version__",
@@ -52,6 +52,7 @@ __all__ = [
     "FredObservation",
     "VintageLimitError",
     "RevisionComparison",
+    "RevisionConflictError",
     "RevisionHistory",
     "RevisionStore",
     "PostgresRevisionStore",
