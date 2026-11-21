@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg role="img" aria-label="August 2008 payroll employment as published over time. The first published value was 137,473 thousand jobs in September 2008. Revisions lowered it to 136,741 thousand by February 2010, then raised it again; the current value, published in February 2025, is 137,211 thousand." xmlns:xlink="http://www.w3.org/1999/xlink" width="255pt" height="364.285714pt" viewBox="0 0 255 364.285714" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <title>August 2008 payroll employment as published over time</title>
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:title>August 2008 payroll employment as published over time</dc:title>
+    <dc:description>The first published value was 137,473 thousand jobs in September 2008. Revisions lowered it to 136,741 thousand by February 2010, then raised it again; the current value, published in February 2025, is 137,211 thousand.</dc:description>
+    <dc:format>image/svg+xml</dc:format>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 364.285714 
+L 255 364.285714 
+L 255 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 40.8 306 
+L 244.8 306 
+L 244.8 87.428571 
+L 40.8 87.428571 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g id="matplotlib.axis_1">
+    <g id="xtick_1">
+     <g id="line2d_1">
+      <defs>
+       <path id="m2d4528c1ce" d="M 0 0 
+L 0 3.5 
+" style="stroke: #6b7b87; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#m2d4528c1ce" x="81.046571" y="306" style="fill: #6b7b87; stroke: #6b7b87; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_1">
+      <text style="font-size: 9.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #6b7b87" x="81.046571" y="320.217773" transform="rotate(-0 81.046571 320.217773)">2012</text>
+     </g>
+    </g>
+    <g id="xtick_2">
+     <g id="line2d_2">
+      <g>
+       <use xlink:href="#m2d4528c1ce" x="125.966541" y="306" style="fill: #6b7b87; stroke: #6b7b87; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_2">
+      <text style="font-size: 9.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #6b7b87" x="125.966541" y="320.217773" transform="rotate(-0 125.966541 320.217773)">2016</text>
+     </g>
+    </g>
+    <g id="xtick_3">
+     <g id="line2d_3">
+      <g>
+       <use xlink:href="#m2d4528c1ce" x="170.886511" y="306" style="fill: #6b7b87; stroke: #6b7b87; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_3">
+      <text style="font-size: 9.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #6b7b87" x="170.886511" y="320.217773" transform="rotate(-0 170.886511 320.217773)">2020</text>
+     </g>
+    </g>
+    <g id="xtick_4">
+     <g id="line2d_4">
+      <g>
+       <use xlink:href="#m2d4528c1ce" x="215.806481" y="306" style="fill: #6b7b87; stroke: #6b7b87; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_4">
+      <text style="font-size: 9.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #6b7b87" x="215.806481" y="320.217773" transform="rotate(-0 215.806481 320.217773)">2024</text>
+     </g>
+    </g>
+    <g id="text_5">
+     <text style="font-size: 10.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #43586a" x="142.8" y="334.478359" transform="rotate(-0 142.8 334.478359)">Release date</text>
+    </g>
+   </g>
+   <g id="matplotlib.axis_2">
+    <g id="ytick_1">
+     <g id="line2d_5">
+      <path d="M 40.8 306 
+L 244.8 306 
+" clip-path="url(#pd0ed481db5)" style="fill: none; stroke-dasharray: 0.8,1.6; stroke-dashoffset: 0; stroke: #dcd8cc; stroke-width: 0.8"/>
+     </g>
+     <g id="line2d_6"/>
+     <g id="text_6">
+      <text style="font-size: 9.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; text-anchor: end; fill: #6b7b87" x="37.3" y="309.608887" transform="rotate(-0 37.3 309.608887)">136,600</text>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_7">
+      <path d="M 40.8 262.285714 
+L 244.8 262.285714 
+" clip-path="url(#pd0ed481db5)" style="fill: none; stroke-dasharray: 0.8,1.6; stroke-dashoffset: 0; stroke: #dcd8cc; stroke-width: 0.8"/>
+     </g>
+     <g id="line2d_8"/>
+     <g id="text_7">
+      <text style="font-size: 9.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; text-anchor: end; fill: #6b7b87" x="37.3" y="265.894601" transform="rotate(-0 37.3 265.894601)">136,800</text>
+     </g>
+    </g>
+    <g id="ytick_3">
+     <g id="line2d_9">
+      <path d="M 40.8 218.571429 
+L 244.8 218.571429 
+" clip-path="url(#pd0ed481db5)" style="fill: none; stroke-dasharray: 0.8,1.6; stroke-dashoffset: 0; stroke: #dcd8cc; stroke-width: 0.8"/>
+     </g>
+     <g id="line2d_10"/>
+     <g id="text_8">
+      <text style="font-size: 9.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; text-anchor: end; fill: #6b7b87" x="37.3" y="222.180315" transform="rotate(-0 37.3 222.180315)">137,000</text>
+     </g>
+    </g>
+    <g id="ytick_4">
+     <g id="line2d_11">
+      <path d="M 40.8 174.857143 
+L 244.8 174.857143 
+" clip-path="url(#pd0ed481db5)" style="fill: none; stroke-dasharray: 0.8,1.6; stroke-dashoffset: 0; stroke: #dcd8cc; stroke-width: 0.8"/>
+     </g>
+     <g id="line2d_12"/>
+     <g id="text_9">
+      <text style="font-size: 9.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; text-anchor: end; fill: #6b7b87" x="37.3" y="178.46603" transform="rotate(-0 37.3 178.46603)">137,200</text>
+     </g>
+    </g>
+    <g id="ytick_5">
+     <g id="line2d_13">
+      <path d="M 40.8 131.142857 
+L 244.8 131.142857 
+" clip-path="url(#pd0ed481db5)" style="fill: none; stroke-dasharray: 0.8,1.6; stroke-dashoffset: 0; stroke: #dcd8cc; stroke-width: 0.8"/>
+     </g>
+     <g id="line2d_14"/>
+     <g id="text_10">
+      <text style="font-size: 9.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; text-anchor: end; fill: #6b7b87" x="37.3" y="134.751744" transform="rotate(-0 37.3 134.751744)">137,400</text>
+     </g>
+    </g>
+    <g id="ytick_6">
+     <g id="line2d_15">
+      <path d="M 40.8 87.428571 
+L 244.8 87.428571 
+" clip-path="url(#pd0ed481db5)" style="fill: none; stroke-dasharray: 0.8,1.6; stroke-dashoffset: 0; stroke: #dcd8cc; stroke-width: 0.8"/>
+     </g>
+     <g id="line2d_16"/>
+     <g id="text_11">
+      <text style="font-size: 9.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; text-anchor: end; fill: #6b7b87" x="37.3" y="91.037458" transform="rotate(-0 37.3 91.037458)">137,600</text>
+     </g>
+    </g>
+   </g>
+   <g id="line2d_17">
+    <path d="M 43.75162 115.187143 
+L 44.612509 115.187143 
+L 44.612509 114.312857 
+L 45.688621 114.312857 
+L 45.688621 126.115714 
+L 48.486511 126.115714 
+L 48.486511 206.987143 
+L 59.678071 206.987143 
+L 59.678071 275.181429 
+L 70.869631 275.181429 
+L 70.869631 273.87 
+L 82.061191 273.87 
+L 82.061191 270.154286 
+L 93.252751 270.154286 
+L 93.252751 254.417143 
+L 104.659533 254.417143 
+L 104.659533 183.162857 
+L 127.042653 183.162857 
+L 127.042653 167.644286 
+L 138.234213 167.644286 
+L 138.234213 168.3 
+L 149.425772 168.3 
+L 149.425772 169.174286 
+L 160.617332 169.174286 
+L 160.617332 168.518571 
+L 172.024115 168.518571 
+L 172.024115 172.015714 
+L 205.598794 172.015714 
+L 205.598794 172.89 
+L 228.197136 172.89 
+L 228.197136 172.452857 
+L 244.8 172.452857 
+L 244.8 172.452857 
+" clip-path="url(#pd0ed481db5)" style="fill: none; stroke: #0b5dc4; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 40.8 306 
+L 40.8 87.428571 
+" style="fill: none; stroke: #8f9aa3; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 40.8 306 
+L 244.8 306 
+" style="fill: none; stroke: #8f9aa3; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="PathCollection_1">
+    <defs>
+     <path id="m98f9ba0147" d="M 0 2.345208 
+C 0.621956 2.345208 1.218523 2.098102 1.658312 1.658312 
+C 2.098102 1.218523 2.345208 0.621956 2.345208 0 
+C 2.345208 -0.621956 2.098102 -1.218523 1.658312 -1.658312 
+C 1.218523 -2.098102 0.621956 -2.345208 0 -2.345208 
+C -0.621956 -2.345208 -1.218523 -2.098102 -1.658312 -1.658312 
+C -2.098102 -1.218523 -2.345208 -0.621956 -2.345208 0 
+C -2.345208 0.621956 -2.098102 1.218523 -1.658312 1.658312 
+C -1.218523 2.098102 -0.621956 2.345208 0 2.345208 
+z
+" style="stroke: #ffffff; stroke-width: 0.8"/>
+    </defs>
+    <g clip-path="url(#pd0ed481db5)">
+     <use xlink:href="#m98f9ba0147" x="43.75162" y="115.187143" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+     <use xlink:href="#m98f9ba0147" x="44.612509" y="114.312857" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+     <use xlink:href="#m98f9ba0147" x="45.688621" y="126.115714" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+     <use xlink:href="#m98f9ba0147" x="48.486511" y="206.987143" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+     <use xlink:href="#m98f9ba0147" x="59.678071" y="275.181429" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+     <use xlink:href="#m98f9ba0147" x="70.869631" y="273.87" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+     <use xlink:href="#m98f9ba0147" x="82.061191" y="270.154286" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+     <use xlink:href="#m98f9ba0147" x="93.252751" y="254.417143" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+     <use xlink:href="#m98f9ba0147" x="104.659533" y="183.162857" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+     <use xlink:href="#m98f9ba0147" x="127.042653" y="167.644286" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+     <use xlink:href="#m98f9ba0147" x="138.234213" y="168.3" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+     <use xlink:href="#m98f9ba0147" x="149.425772" y="169.174286" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+     <use xlink:href="#m98f9ba0147" x="160.617332" y="168.518571" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+     <use xlink:href="#m98f9ba0147" x="172.024115" y="172.015714" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+     <use xlink:href="#m98f9ba0147" x="205.598794" y="172.89" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+     <use xlink:href="#m98f9ba0147" x="228.197136" y="172.452857" style="fill: #0b5dc4; stroke: #ffffff; stroke-width: 0.8"/>
+    </g>
+   </g>
+   <g id="text_12">
+    <text style="font-size: 9.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; fill: #1d2b36" transform="translate(53.75162 107.95436)">First published</text>
+    <text style="font-size: 9.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; fill: #1d2b36" transform="translate(53.75162 119.356215)">137,473</text>
+   </g>
+   <g id="text_13">
+    <text style="font-size: 9.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; text-anchor: start; fill: #1d2b36" x="63.678071" y="291.649573" transform="rotate(-0 63.678071 291.649573)">Feb 2010: 136,741</text>
+   </g>
+   <g id="text_14">
+    <text style="font-size: 9.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; text-anchor: end; fill: #1d2b36" x="228.197136" y="160.921002" transform="rotate(-0 228.197136 160.921002)">Today: 137,211</text>
+   </g>
+  </g>
+  <g id="text_15">
+   <text style="font-weight: 700; font-size: 10px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; text-anchor: start; fill: #0b5dc4" x="12.75" y="19.598437" transform="rotate(-0 12.75 19.598437)">Fig. 1</text>
+  </g>
+  <g id="text_16">
+   <text style="font-weight: 700; font-size: 12.5px; font-family: Tahoma, Verdana, 'DejaVu Sans', sans-serif; text-anchor: start; fill: #1d2b36" x="12.75" y="37.998047" transform="rotate(-0 12.75 37.998047)">August 2008 payrolls, as published over time</text>
+  </g>
+  <g id="text_17">
+   <text style="font-size: 8.5px; font-family: Consolas, Menlo, 'DejaVu Sans Mono', monospace; text-anchor: start; fill: #6b7b87" x="12.75" y="357.872294" transform="rotate(-0 12.75 357.872294)">docs/figures/data/payems-2008-08-revisions.csv</text>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="pd0ed481db5">
+   <rect x="40.8" y="87.428571" width="204" height="218.571429"/>
+  </clipPath>
+ </defs>
+</svg>

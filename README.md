@@ -16,6 +16,12 @@ In September 2008, the reported value for August payroll employment was 137,473 
 
 The result was verified against ALFRED on October 22, 2026. The executed experiment is in [`notebooks/point_in_time_prototype.ipynb`](notebooks/point_in_time_prototype.ipynb).
 
+That observation has been published 16 different ways. Revisions lowered it by 732 thousand by February 2010 before it worked its way back up:
+
+![August 2008 payrolls as published over time](docs/figures/payems-revisions.svg)
+
+The data comes from [`notebooks/revision_history.ipynb`](notebooks/revision_history.ipynb); `python scripts/make_figures.py` redraws the figure.
+
 ## What it does
 
 - Reconstructs the value known on a historical date.
